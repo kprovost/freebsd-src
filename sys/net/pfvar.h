@@ -325,6 +325,50 @@ struct pf_kpool {
 	u_int8_t		 opts;
 };
 
+union pf_keth_rule_ptr {
+	struct pf_keth_rule	*ptr;
+	u_int32_t		nr;
+};
+
+struct pf_keth_rule {
+	union pf_keth_rule_ptr	 skip[PFL_SKIP_COUNT];
+
+	TAILQ_ENTRY(pf_keth_rule)	entries;
+
+	u_int32_t		 nr;
+
+	bool			 quick;
+
+	/* Filter */
+	char			 ifname[IFNAMSIZ];
+	struct pfi_kkif		*kif;
+	u_int8_t		 ifnot;
+	u_int8_t		 direction;
+	u_int16_t		 proto;
+	u_int8_t		 src[ETHER_ADDR_LEN];
+	u_int8_t		 dst[ETHER_ADDR_LEN];
+
+	/* Stats */
+	counter_u64_t		 evaluations;
+	counter_u64_t		 packets[2];
+	counter_u64_t		 bytes[2];
+
+	/* Action */
+	char			 qname[PF_QNAME_SIZE];
+	int			 qid;
+	char			 tagname[PF_TAG_NAME_SIZE];
+	u_int16_t		 tag;
+	u_int8_t		 action;
+};
+
+TAILQ_HEAD(pf_keth_rules, pf_keth_rule);
+
+struct pf_keth_settings {
+	struct pf_keth_rules	rules;
+	u_int32_t		ticket;
+	int			open;
+};
+
 union pf_krule_ptr {
 	struct pf_krule		*ptr;
 	u_int32_t		 nr;
@@ -1050,6 +1094,12 @@ struct pfioc_pooladdr {
 	struct pf_pooladdr	 addr;
 };
 
+struct pfioc_eth_rule {
+	u_int32_t		 ticket;
+	u_int32_t		 nr;
+	struct pf_eth_rule	 rule;
+};
+
 struct pfioc_rule {
 	u_int32_t	 action;
 	u_int32_t	 ticket;
@@ -1203,6 +1253,7 @@ struct pfioc_ruleset {
 
 #define PF_RULESET_ALTQ		(PF_RULESET_MAX)
 #define PF_RULESET_TABLE	(PF_RULESET_MAX+1)
+#define	PF_RULESET_ETH		(PF_RULESET_MAX+2)
 struct pfioc_trans {
 	int		 size;	/* number of elements */
 	int		 esize; /* size of each element in bytes */
@@ -1354,6 +1405,10 @@ struct pf_ifspeed_v1 {
 
 #define	DIOCGIFSPEEDV0	_IOWR('D', 92, struct pf_ifspeed_v0)
 #define	DIOCGIFSPEEDV1	_IOWR('D', 92, struct pf_ifspeed_v1)
+
+#define DIOCADDETHRULE		_IOWR('D', 93, struct pfioc_eth_rule)
+#define DIOCGETETHRULE		_IOWR('D', 94, struct pfioc_eth_rule)
+#define DIOCGETETHRULES		_IOWR('D', 95, struct pfioc_eth_rule)
 
 /*
  * Compatibility and convenience macros
@@ -1532,6 +1587,7 @@ extern void			 pf_addrcpy(struct pf_addr *, struct pf_addr *,
 				    u_int8_t);
 void				pf_free_rule(struct pf_krule *);
 
+int	pf_test_eth(int, int, struct ifnet *, struct mbuf **, struct inpcb *);
 #ifdef INET
 int	pf_test(int, int, struct ifnet *, struct mbuf **, struct inpcb *);
 int	pf_normalize_ip(struct mbuf **, int, struct pfi_kkif *, u_short *,
@@ -1560,6 +1616,7 @@ void	pf_patch_16_unaligned(struct mbuf *, u_int16_t *, void *, u_int16_t,
 void	pf_patch_32_unaligned(struct mbuf *, u_int16_t *, void *, u_int32_t,
     bool, u_int8_t);
 void	pf_send_deferred_syn(struct pf_state *);
+bool	pf_match_eth_addr(const u_int8_t *, const u_int8_t *);
 int	pf_match_addr(u_int8_t, struct pf_addr *, struct pf_addr *,
 	    struct pf_addr *, sa_family_t);
 int	pf_match_addr_range(struct pf_addr *, struct pf_addr *,
@@ -1671,7 +1728,13 @@ VNET_DECLARE(struct pf_kanchor,			 pf_main_anchor);
 #define	V_pf_main_anchor			 VNET(pf_main_anchor)
 #define pf_main_ruleset	V_pf_main_anchor.ruleset
 
+VNET_DECLARE(struct pf_keth_settings*,		 pf_keth);
+#define	V_pf_keth				 VNET(pf_keth)
+VNET_DECLARE(struct pf_keth_settings*,		 pf_keth_inactive);
+#define	V_pf_keth_inactive			 VNET(pf_keth_inactive)
+
 void			 pf_init_kruleset(struct pf_kruleset *);
+void			 pf_init_keth(struct pf_keth_settings *);
 int			 pf_kanchor_setup(struct pf_krule *,
 			    const struct pf_kruleset *, const char *);
 int			 pf_kanchor_nvcopyout(const struct pf_kruleset *,

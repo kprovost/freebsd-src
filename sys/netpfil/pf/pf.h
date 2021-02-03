@@ -36,6 +36,7 @@
 #define	_NET_PF_H_
 
 #include <sys/tree.h>
+#include <net/ethernet.h>
 
 #define	PF_TCPS_PROXY_SRC	((TCP_NSTATES)+0)
 #define	PF_TCPS_PROXY_DST	((TCP_NSTATES)+1)
@@ -436,6 +437,39 @@ struct pf_osfp_ioctl {
 
 #define	PF_ANCHOR_NAME_SIZE	 64
 
+struct pf_eth_rule {
+#define	PFL_SKIP_IFP		0
+#define PFL_SKIP_DIR		1
+#define PFL_SKIP_PROTO		2
+#define PFL_SKIP_SRC_ADDR	3
+#define PFL_SKIP_DST_ADDR	4
+#define PFL_SKIP_COUNT		5
+	u_int32_t		 skip[PFL_SKIP_COUNT];
+
+	u_int32_t		 nr;
+
+	u_int8_t		 quick;
+
+	/* Filter */
+	char			 ifname[IFNAMSIZ];
+	u_int8_t		 ifnot;
+	u_int8_t		 direction;
+	u_int16_t		 proto;
+	u_int8_t		 src[ETHER_ADDR_LEN];
+	u_int8_t		 dst[ETHER_ADDR_LEN];
+
+	/* Stats */
+	uint64_t		 evaluations;
+	uint64_t		 packets[2];
+	uint64_t		 bytes[2];
+
+	/* Action */
+	char			 qname[PF_QNAME_SIZE];
+#define	PF_TAG_NAME_SIZE	 64
+	char			 tagname[PF_TAG_NAME_SIZE];
+	u_int8_t		 action;
+};
+
 struct pf_rule {
 	struct pf_rule_addr	 src;
 	struct pf_rule_addr	 dst;
@@ -455,7 +489,6 @@ struct pf_rule {
 	char			 ifname[IFNAMSIZ];
 	char			 qname[PF_QNAME_SIZE];
 	char			 pqname[PF_QNAME_SIZE];
-#define	PF_TAG_NAME_SIZE	 64
 	char			 tagname[PF_TAG_NAME_SIZE];
 	char			 match_tagname[PF_TAG_NAME_SIZE];
 

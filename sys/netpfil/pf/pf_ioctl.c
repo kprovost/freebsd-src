@@ -732,9 +732,9 @@ pf_eth_calc_skip_steps(struct pf_keth_rules *rules)
 			PF_SET_SKIP_STEPS(PFL_SKIP_DIR);
 		if (cur->proto != prev->proto)
 			PF_SET_SKIP_STEPS(PFL_SKIP_PROTO);
-		if (! pf_match_eth_addr(cur->src, prev->src))
+		if (memcmp(&cur->src, &prev->src, sizeof(cur->src)) != 0)
 			PF_SET_SKIP_STEPS(PFL_SKIP_SRC_ADDR);
-		if (! pf_match_eth_addr(cur->dst, prev->dst))
+		if (memcmp(&cur->dst, &prev->dst, sizeof(cur->dst)) != 0)
 			PF_SET_SKIP_STEPS(PFL_SKIP_DST_ADDR);
 
 		prev = cur;
@@ -1655,6 +1655,29 @@ pf_pooladdr_to_kpooladdr(const struct pf_pooladdr *pool,
 	strlcpy(kpool->ifname, pool->ifname, sizeof(kpool->ifname));
 }
 
+static void
+pf_eth_rule_addr_to_keth_rule_addr(const struct pf_eth_rule_addr *rule,
+    struct pf_keth_rule_addr *krule)
+{
+	static const u_int8_t EMPTY_MAC[ETHER_ADDR_LEN] = { 0 };
+
+	memcpy(&krule->addr, &rule->addr, sizeof(krule->addr));
+	krule->neg = rule->neg;
+
+	/* To make checks for 'is this address set?' easier. */
+	if (memcmp(krule->addr, EMPTY_MAC, ETHER_ADDR_LEN) != 0)
+		krule->isset = 1;
+}
+
+static void
+pf_keth_rule_addr_to_eth_rule_addr(const struct pf_keth_rule_addr *krule,
+    struct pf_eth_rule_addr *rule)
+{
+
+	memcpy(&rule->addr, &krule->addr, sizeof(rule->addr));
+	rule->neg = krule->neg;
+}
+
 static int
 pf_eth_rule_to_keth_rule(const struct pf_eth_rule *rule,
     struct pf_keth_rule *krule)
@@ -1669,8 +1692,8 @@ pf_eth_rule_to_keth_rule(const struct pf_eth_rule *rule,
 	krule->ifnot = rule->ifnot;
 	krule->direction = rule->direction;
 	krule->proto = rule->proto;
-	bcopy(&rule->src, &krule->src, sizeof(krule->src));
-	bcopy(&rule->dst, &krule->dst, sizeof(krule->dst));
+	pf_eth_rule_addr_to_keth_rule_addr(&rule->src, &krule->src);
+	pf_eth_rule_addr_to_keth_rule_addr(&rule->dst, &krule->dst);
 
 	strlcpy(krule->qname, rule->qname, PF_QNAME_SIZE);
 	strlcpy(krule->tagname, rule->tagname, PF_TAG_NAME_SIZE);
@@ -1693,8 +1716,8 @@ pf_keth_rule_to_eth_rule(const struct pf_keth_rule *krule,
 	rule->ifnot = krule->ifnot;
 	rule->direction = krule->direction;
 	rule->proto = krule->proto;
-	bcopy(&krule->src, &rule->src, sizeof(rule->src));
-	bcopy(&krule->dst, &rule->dst, sizeof(rule->dst));
+	pf_keth_rule_addr_to_eth_rule_addr(&krule->src, &rule->src);
+	pf_keth_rule_addr_to_eth_rule_addr(&krule->dst, &rule->dst);
 
 	rule->evaluations = counter_u64_fetch(krule->evaluations);
 	for (int i = 0; i < 2; i++) {

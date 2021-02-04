@@ -325,6 +325,12 @@ struct pf_kpool {
 	u_int8_t		 opts;
 };
 
+struct pf_keth_rule_addr {
+	u_int8_t	addr[ETHER_ADDR_LEN];
+	u_int8_t	neg;
+	u_int8_t	isset;
+};
+
 union pf_keth_rule_ptr {
 	struct pf_keth_rule	*ptr;
 	u_int32_t		nr;
@@ -345,8 +351,7 @@ struct pf_keth_rule {
 	u_int8_t		 ifnot;
 	u_int8_t		 direction;
 	u_int16_t		 proto;
-	u_int8_t		 src[ETHER_ADDR_LEN];
-	u_int8_t		 dst[ETHER_ADDR_LEN];
+	struct pf_keth_rule_addr src, dst;
 
 	/* Stats */
 	counter_u64_t		 evaluations;
@@ -1616,7 +1621,7 @@ void	pf_patch_16_unaligned(struct mbuf *, u_int16_t *, void *, u_int16_t,
 void	pf_patch_32_unaligned(struct mbuf *, u_int16_t *, void *, u_int32_t,
     bool, u_int8_t);
 void	pf_send_deferred_syn(struct pf_state *);
-bool	pf_match_eth_addr(const u_int8_t *, const u_int8_t *);
+bool	pf_match_eth_addr(const u_int8_t *, const struct pf_keth_rule_addr *);
 int	pf_match_addr(u_int8_t, struct pf_addr *, struct pf_addr *,
 	    struct pf_addr *, sa_family_t);
 int	pf_match_addr_range(struct pf_addr *, struct pf_addr *,

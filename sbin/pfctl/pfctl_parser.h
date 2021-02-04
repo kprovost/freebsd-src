@@ -91,7 +91,9 @@ struct pfctl {
 	struct pfioc_queue *pqueue;
 	struct pfr_buffer *trans;
 	struct pfctl_anchor *anchor, *alast;
-	struct pf_eth_rules *eth_rules;
+	int eth_nr;
+	struct pf_eth_rules eth_rules;
+	u_int32_t eth_ticket;
 	const char *ruleset;
 
 	/* 'set foo' options */
@@ -330,6 +332,7 @@ struct pf_timeout {
 #define PFCTL_FLAG_OPTION	0x08
 #define PFCTL_FLAG_ALTQ		0x10
 #define PFCTL_FLAG_TABLE	0x20
+#define PFCTL_FLAG_ETH		0x40
 
 extern const struct pf_timeout pf_timeouts[];
 

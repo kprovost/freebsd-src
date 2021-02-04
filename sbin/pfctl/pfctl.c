@@ -110,6 +110,8 @@ void	 pfctl_debug(int, u_int32_t, int);
 int	 pfctl_test_altqsupport(int, int);
 int	 pfctl_show_anchors(int, int, char *);
 int	 pfctl_ruleset_trans(struct pfctl *, char *, struct pfctl_anchor *);
+int	 pfctl_load_eth_rule(struct pfctl *, struct pf_eth_rule *);
+int	 pfctl_load_eth_ruleset(struct pfctl *);
 int	 pfctl_load_ruleset(struct pfctl *, char *,
 		struct pfctl_ruleset *, int, int);
 int	 pfctl_load_rule(struct pfctl *, char *, struct pfctl_rule *, int);
@@ -1462,6 +1464,12 @@ pfctl_ruleset_trans(struct pfctl *pf, char *path, struct pfctl_anchor *a)
 {
 	int osize = pf->trans->pfrb_size;
 
+	if ((pf->loadopt & PFCTL_FLAG_ETH) != 0) {
+		if (! path[0]) {
+			if (pfctl_add_trans(pf->trans, PF_RULESET_ETH, path))
+				return (1);
+		}
+	}
 	if ((pf->loadopt & PFCTL_FLAG_NAT) != 0) {
 		if (pfctl_add_trans(pf->trans, PF_RULESET_NAT, path) ||
 		    pfctl_add_trans(pf->trans, PF_RULESET_BINAT, path) ||
@@ -1483,6 +1491,41 @@ pfctl_ruleset_trans(struct pfctl *pf, char *path, struct pfctl_anchor *a)
 			return (4);
 	if (pfctl_trans(pf->dev, pf->trans, DIOCXBEGIN, osize))
 		return (5);
+
+	return (0);
+}
+
+int pfctl_load_eth_rule(struct pfctl *pf, struct pf_eth_rule *r)
+{
+	struct pfioc_eth_rule	pr;
+
+	bzero(&pr, sizeof(pr));
+
+	if ((pf->opts & PF_OPT_NOACTION) == 0) {
+		pr.ticket = pf->eth_ticket;
+		memcpy(&pr.rule, r, sizeof(pr.rule));
+		if (ioctl(pf->dev, DIOCADDETHRULE, &pr))
+			err(1, "DIOCADDETHRULE");
+	}
+
+	return (0);
+}
+
+int
+pfctl_load_eth_ruleset(struct pfctl *pf)
+{
+	struct pf_eth_rule	*r;
+	int	error;
+
+	while ((r = TAILQ_FIRST(&pf->eth_rules)) != NULL) {
+		TAILQ_REMOVE(&pf->eth_rules, r, entries);
+
+		error = pfctl_load_eth_rule(pf, r);
+		if (error)
+			return (error);
+
+		free(r);
+	}
 
 	return (0);
 }
@@ -1659,6 +1702,7 @@ pfctl_rules(int dev, char *filename, int opts, int optimize,
 	pf.opts = opts;
 	pf.optimize = optimize;
 	pf.loadopt = loadopt;
+	TAILQ_INIT(&pf.eth_rules);
 
 	/* non-brace anchor, create without resolving the path */
 	if ((pf.anchor = calloc(1, sizeof(*pf.anchor))) == NULL)
@@ -1690,6 +1734,8 @@ pfctl_rules(int dev, char *filename, int opts, int optimize,
 		 */
 		if (pfctl_ruleset_trans(&pf, anchorname, pf.anchor))
 			ERRX("pfctl_rules");
+		if (pf.loadopt & PFCTL_FLAG_ETH)
+			pf.eth_ticket = pfctl_get_ticket(t, PF_RULESET_ETH, anchorname);
 		if (altqsupport && (pf.loadopt & PFCTL_FLAG_ALTQ))
 			pa.ticket =
 			    pfctl_get_ticket(t, PF_RULESET_ALTQ, anchorname);
@@ -1710,6 +1756,8 @@ pfctl_rules(int dev, char *filename, int opts, int optimize,
 
 	if ((pf.loadopt & PFCTL_FLAG_FILTER &&
 	    (pfctl_load_ruleset(&pf, path, rs, PF_RULESET_SCRUB, 0))) ||
+	    (pf.loadopt & PFCTL_FLAG_ETH &&
+	    (pfctl_load_eth_ruleset(&pf))) ||
 	    (pf.loadopt & PFCTL_FLAG_NAT &&
 	    (pfctl_load_ruleset(&pf, path, rs, PF_RULESET_NAT, 0) ||
 	    pfctl_load_ruleset(&pf, path, rs, PF_RULESET_RDR, 0) ||

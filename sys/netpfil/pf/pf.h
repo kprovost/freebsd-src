@@ -437,6 +437,11 @@ struct pf_osfp_ioctl {
 
 #define	PF_ANCHOR_NAME_SIZE	 64
 
+struct pf_eth_rule_addr {
+	u_int8_t	addr[ETHER_ADDR_LEN];
+	u_int8_t	neg;
+};
+
 struct pf_eth_rule {
 #define	PFL_SKIP_IFP		0
 #define PFL_SKIP_DIR		1
@@ -455,8 +460,7 @@ struct pf_eth_rule {
 	u_int8_t		 ifnot;
 	u_int8_t		 direction;
 	u_int16_t		 proto;
-	u_int8_t		 src[ETHER_ADDR_LEN];
-	u_int8_t		 dst[ETHER_ADDR_LEN];
+	struct pf_eth_rule_addr	 src, dst;
 
 	/* Stats */
 	uint64_t		 evaluations;
@@ -468,7 +472,11 @@ struct pf_eth_rule {
 #define	PF_TAG_NAME_SIZE	 64
 	char			 tagname[PF_TAG_NAME_SIZE];
 	u_int8_t		 action;
+
+	TAILQ_ENTRY(pf_eth_rule)	entries;
 };
+
+TAILQ_HEAD(pf_eth_rules, pf_eth_rule);
 
 struct pf_rule {
 	struct pf_rule_addr	 src;

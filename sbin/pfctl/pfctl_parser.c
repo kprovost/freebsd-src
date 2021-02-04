@@ -719,14 +719,20 @@ print_eth_rule(struct pf_eth_rule *r, int rule_numbers)
 			printf(" on %s", r->ifname);
 	}
 	if (r->proto)
-		printf(" proto %u", r->proto);
+		printf(" proto 0x%04x", r->proto);
 
 	printf(" from ");
-	printf("%02x:%02x:%02x:%02x:%02x:%02x", r->src[0], r->src[1],
-	    r->src[2], r->src[3], r->src[4], r->src[5]);
+	if (r->src.neg)
+		printf(" ! ");
+	printf("%02x:%02x:%02x:%02x:%02x:%02x", r->src.addr[0],
+	    r->src.addr[1], r->src.addr[2], r->src.addr[3], r->src.addr[4],
+	    r->src.addr[5]);
 	printf(" to ");
-	printf("%02x:%02x:%02x:%02x:%02x:%02x", r->dst[0], r->dst[1],
-	    r->dst[2], r->dst[3], r->dst[4], r->dst[5]);
+	if (r->dst.neg)
+		printf(" ! ");
+	printf("%02x:%02x:%02x:%02x:%02x:%02x", r->dst.addr[0],
+	    r->dst.addr[1], r->dst.addr[2], r->dst.addr[3], r->dst.addr[4],
+	    r->dst.addr[5]);
 
 	if (r->qname[0])
 		printf(" queue %s", r->qname);

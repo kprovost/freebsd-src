@@ -3329,15 +3329,17 @@ pf_tcp_iss(struct pf_pdesc *pd)
 }
 
 bool
-pf_match_eth_addr(const u_int8_t *a, const u_int8_t *b)
+pf_match_eth_addr(const u_int8_t *a, const struct pf_keth_rule_addr *r)
 {
-	static const u_int8_t EMPTY_MAC[ETHER_ADDR_LEN] = { 0 };
 
-	/* XXX. Add an 'is not set' shortcut. */
-	if (memcmp(b, EMPTY_MAC, ETHER_ADDR_LEN) == 0)
-		return true;
+	/* Always matches if not set */
+	if (! r->isset)
+		return (!r->neg);
 
-	return (memcmp(a, b, ETHER_ADDR_LEN) == 0);
+	if (memcmp(a, r->addr, ETHER_ADDR_LEN) == 0)
+		return (!r->neg);
+
+	return (r->neg);
 }
 
 static int
@@ -3367,9 +3369,9 @@ pf_test_eth_rule(int dir, struct pfi_kkif *kif, struct mbuf *m)
 			r = r->skip[PFL_SKIP_DIR].ptr;
 		else if (r->proto && r->proto != ntohs(e->ether_type))
 			r = r->skip[PFL_SKIP_PROTO].ptr;
-		else if (! pf_match_eth_addr(e->ether_shost, r->src))
+		else if (! pf_match_eth_addr(e->ether_shost, &r->src))
 			r = r->skip[PFL_SKIP_SRC_ADDR].ptr;
-		else if (! pf_match_eth_addr(e->ether_dhost, r->dst)) {
+		else if (! pf_match_eth_addr(e->ether_dhost, &r->dst)) {
 			r = TAILQ_NEXT(r, entries);
 		}
 		else {

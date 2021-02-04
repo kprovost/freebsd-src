@@ -95,7 +95,9 @@ int	 pfctl_load_logif(struct pfctl *, char *);
 int	 pfctl_load_hostid(struct pfctl *, u_int32_t);
 int	 pfctl_get_pool(int, struct pfctl_pool *, u_int32_t, u_int32_t, int,
 	    char *);
+void	 pfctl_print_eth_rule_counters(struct pf_eth_rule *, int);
 void	 pfctl_print_rule_counters(struct pfctl_rule *, int);
+int	 pfctl_show_eth_rules(int, int);
 int	 pfctl_show_rules(int, char *, int, enum pfctl_show, char *, int);
 int	 pfctl_show_nat(int, int, char *);
 int	 pfctl_show_src_nodes(int, int);
@@ -221,9 +223,9 @@ static const char * const clearopt_list[] = {
 };
 
 static const char * const showopt_list[] = {
-	"nat", "queue", "rules", "Anchors", "Sources", "states", "info",
-	"Interfaces", "labels", "timeouts", "memory", "Tables", "osfp",
-	"Running", "all", NULL
+	"ether", "nat", "queue", "rules", "Anchors", "Sources", "states",
+	"info", "Interfaces", "labels", "timeouts", "memory", "Tables",
+	"osfp", "Running", "all", NULL
 };
 
 static const char * const tblcmdopt_list[] = {
@@ -944,6 +946,20 @@ pfctl_clear_pool(struct pfctl_pool *pool)
 }
 
 void
+pfctl_print_eth_rule_counters(struct pf_eth_rule *rule, int opts)
+{
+	if (opts & PF_OPT_VERBOSE) {
+		printf("  [ Evaluations: %-8llu  Packets: %-8llu  "
+			    "Bytes: %-10llu]\n",
+			    (unsigned long long)rule->evaluations,
+			    (unsigned long long)(rule->packets[0] +
+			    rule->packets[1]),
+			    (unsigned long long)(rule->bytes[0] +
+			    rule->bytes[1]));
+	}
+}
+
+void
 pfctl_print_rule_counters(struct pfctl_rule *rule, int opts)
 {
 	if (opts & PF_OPT_DEBUG) {
@@ -989,6 +1005,40 @@ pfctl_print_title(char *title)
 		printf("\n");
 	first_title = 0;
 	printf("%s\n", title);
+}
+
+int
+pfctl_show_eth_rules(int dev, int opts)
+{
+	struct pfioc_eth_rule pr;
+	u_int32_t mnr;
+	int dotitle = opts & PF_OPT_SHOWALL;
+
+	memset(&pr, 0, sizeof(pr));
+
+	if (ioctl(dev, DIOCGETETHRULES, &pr)) {
+		warn("DIOCGETETHRULES");
+		return (-1);
+	}
+
+	mnr = pr.nr;
+
+	for (int nr = 0; nr < mnr; nr++) {
+		pr.nr = nr;
+		if (ioctl(dev, DIOCGETETHRULE, &pr)) {
+			warn("DIOCGETETHRULE");
+			return (-1);
+		}
+		if (dotitle) {
+			pfctl_print_title("ETH RULES:");
+			dotitle = 0;
+		}
+		print_eth_rule(&pr.rule, opts & (PF_OPT_VERBOSE2 | PF_OPT_DEBUG));
+		printf("\n");
+		pfctl_print_eth_rule_counters(&pr.rule, opts);
+	}
+
+	return (0);
 }
 
 int
@@ -2432,9 +2482,14 @@ main(int argc, char *argv[])
 		case 'm':
 			pfctl_show_limits(dev, opts);
 			break;
+		case 'e':
+			pfctl_show_eth_rules(dev, opts);
+			break;
 		case 'a':
 			opts |= PF_OPT_SHOWALL;
 			pfctl_load_fingerprints(dev, opts);
+
+			pfctl_show_eth_rules(dev, opts);
 
 			pfctl_show_nat(dev, opts, anchorname);
 			pfctl_show_rules(dev, path, opts, 0, anchorname, 0);

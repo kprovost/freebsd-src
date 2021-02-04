@@ -91,6 +91,7 @@ struct pfctl {
 	struct pfioc_queue *pqueue;
 	struct pfr_buffer *trans;
 	struct pfctl_anchor *anchor, *alast;
+	struct pf_eth_rules *eth_rules;
 	const char *ruleset;
 
 	/* 'set foo' options */
@@ -276,6 +277,7 @@ int	pfctl_load_anchors(int, struct pfctl *, struct pfr_buffer *);
 
 void	print_pool(struct pfctl_pool *, u_int16_t, u_int16_t, sa_family_t, int);
 void	print_src_node(struct pf_src_node *, int);
+void	print_eth_rule(struct pf_eth_rule *, int);
 void	print_rule(struct pfctl_rule *, const char *, int, int);
 void	print_tabledef(const char *, int, int, struct node_tinithead *);
 void	print_status(struct pf_status *, int);

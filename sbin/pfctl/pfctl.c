@@ -95,7 +95,7 @@ int	 pfctl_load_logif(struct pfctl *, char *);
 int	 pfctl_load_hostid(struct pfctl *, u_int32_t);
 int	 pfctl_get_pool(int, struct pfctl_pool *, u_int32_t, u_int32_t, int,
 	    char *);
-void	 pfctl_print_eth_rule_counters(struct pf_eth_rule *, int);
+void	 pfctl_print_eth_rule_counters(const nvlist_t *, int);
 void	 pfctl_print_rule_counters(struct pfctl_rule *, int);
 int	 pfctl_show_eth_rules(int, int);
 int	 pfctl_show_rules(int, char *, int, enum pfctl_show, char *, int);
@@ -948,17 +948,18 @@ pfctl_clear_pool(struct pfctl_pool *pool)
 }
 
 void
-pfctl_print_eth_rule_counters(struct pf_eth_rule *rule, int opts)
+pfctl_print_eth_rule_counters(const nvlist_t *nvl, int opts)
 {
-	if (opts & PF_OPT_VERBOSE) {
-		printf("  [ Evaluations: %-8llu  Packets: %-8llu  "
-			    "Bytes: %-10llu]\n",
-			    (unsigned long long)rule->evaluations,
-			    (unsigned long long)(rule->packets[0] +
-			    rule->packets[1]),
-			    (unsigned long long)(rule->bytes[0] +
-			    rule->bytes[1]));
-	}
+	if ((opts & PF_OPT_VERBOSE) == 0)
+		return;
+
+	printf("  [ Evaluations: %-8llu  Packets: %-8llu  "
+		    "Bytes: %-10llu]\n",
+		    (unsigned long long)nvlist_get_number(nvl, "evaluations"),
+		    (unsigned long long)nvlist_get_number(nvl, "packets-in") +
+		    nvlist_get_number(nvl, "packets-out"),
+		    (unsigned long long)nvlist_get_number(nvl, "bytes-in") +
+		    nvlist_get_number(nvl, "bytes-out"));
 }
 
 void
@@ -1012,32 +1013,61 @@ pfctl_print_title(char *title)
 int
 pfctl_show_eth_rules(int dev, int opts)
 {
-	struct pfioc_eth_rule pr;
-	u_int32_t mnr;
+	struct pfioc_nv nv;
+	u_int8_t buf[1024];
+	nvlist_t *nvl;
+	u_int32_t mnr, ticket;
+	size_t len;
 	int dotitle = opts & PF_OPT_SHOWALL;
+	void *data;
 
-	memset(&pr, 0, sizeof(pr));
+	memset(&nv, 0, sizeof(nv));
+	nv.data = &buf;
+	nv.size = sizeof(buf);
 
-	if (ioctl(dev, DIOCGETETHRULES, &pr)) {
+	if (ioctl(dev, DIOCGETETHRULES, &nv)) {
 		warn("DIOCGETETHRULES");
 		return (-1);
 	}
 
-	mnr = pr.nr;
+	nvl = nvlist_unpack(buf, nv.len, 0);
+	if (nvl == NULL) {
+		warn("nvlist_unpack DIOCGETETHRULES");
+		return (-1);
+	}
+	mnr = nvlist_get_number(nvl, "nr");
+	ticket = nvlist_get_number(nvl, "ticket");
+	nvlist_destroy(nvl);
 
 	for (int nr = 0; nr < mnr; nr++) {
-		pr.nr = nr;
-		if (ioctl(dev, DIOCGETETHRULE, &pr)) {
+		nvl = nvlist_create(0);
+		nvlist_add_number(nvl, "ticket", ticket);
+		nvlist_add_number(nvl, "nr", nr);
+
+		data = nvlist_pack(nvl, &len);
+		nv.data = buf;
+		memcpy(buf, data, len);
+		free(data);
+		nv.len = len;
+		nv.size = sizeof(buf);
+		if (ioctl(dev, DIOCGETETHRULE, &nv)) {
 			warn("DIOCGETETHRULE");
+			nvlist_destroy(nvl);
 			return (-1);
 		}
 		if (dotitle) {
 			pfctl_print_title("ETH RULES:");
 			dotitle = 0;
 		}
-		print_eth_rule(&pr.rule, opts & (PF_OPT_VERBOSE2 | PF_OPT_DEBUG));
+		nvlist_destroy(nvl);
+
+		nvl = nvlist_unpack(buf, nv.len, 0);
+		if (nvl == NULL)
+			errx(1, "DIOCGETETHRULE unpack");
+
+		print_eth_rule(nvl, opts & (PF_OPT_VERBOSE2 | PF_OPT_DEBUG));
 		printf("\n");
-		pfctl_print_eth_rule_counters(&pr.rule, opts);
+		pfctl_print_eth_rule_counters(nvl, opts);
 	}
 
 	return (0);
@@ -1495,18 +1525,77 @@ pfctl_ruleset_trans(struct pfctl *pf, char *path, struct pfctl_anchor *a)
 	return (0);
 }
 
+static nvlist_t *
+pfctl_eth_addr_to_nvl(const struct pf_eth_rule_addr *addr)
+{
+	nvlist_t *nvl;
+
+	nvl = nvlist_create(0);
+	if (nvl == NULL)
+		return (NULL);
+
+	nvlist_add_bool(nvl, "neg", addr->neg);
+	nvlist_add_binary(nvl, "addr", &addr->addr, ETHER_ADDR_LEN);
+
+	return (nvl);
+}
+
 int pfctl_load_eth_rule(struct pfctl *pf, struct pf_eth_rule *r)
 {
-	struct pfioc_eth_rule	pr;
+	struct pfioc_nv nv;
+	nvlist_t *nvl, *addr;
+	void *packed;
+	size_t size;
 
-	bzero(&pr, sizeof(pr));
+	if ((pf->opts & PF_OPT_NOACTION) != 0)
+		return (0);
 
-	if ((pf->opts & PF_OPT_NOACTION) == 0) {
-		pr.ticket = pf->eth_ticket;
-		memcpy(&pr.rule, r, sizeof(pr.rule));
-		if (ioctl(pf->dev, DIOCADDETHRULE, &pr))
-			err(1, "DIOCADDETHRULE");
+	nvl = nvlist_create(0);
+	if (nvl == NULL)
+		return (ENOMEM);
+
+	nvlist_add_number(nvl, "ticket", pf->eth_ticket);
+
+	nvlist_add_number(nvl, "nr", r->nr);
+	nvlist_add_bool(nvl, "quick", r->quick);
+	nvlist_add_string(nvl, "ifname", r->ifname);
+	nvlist_add_bool(nvl, "ifnot", r->ifnot);
+	nvlist_add_number(nvl, "direction", r->direction);
+	nvlist_add_number(nvl, "proto", r->proto);
+
+	addr = pfctl_eth_addr_to_nvl(&r->src);
+	if (addr == NULL) {
+		nvlist_destroy(nvl);
+		return (ENOMEM);
 	}
+	nvlist_add_nvlist(nvl, "src", addr);
+
+	addr = pfctl_eth_addr_to_nvl(&r->dst);
+	if (addr == NULL) {
+		nvlist_destroy(nvl);
+		return (ENOMEM);
+	}
+	nvlist_add_nvlist(nvl, "dst", addr);
+
+	nvlist_add_string(nvl, "qname", r->qname);
+	nvlist_add_string(nvl, "tagname", r->tagname);
+	nvlist_add_number(nvl, "action", r->action);
+
+	packed = nvlist_pack(nvl, &size);
+	if (packed == NULL) {
+		nvlist_destroy(nvl);
+		return (ENOMEM);
+	}
+
+	nv.len = size;
+	nv.size = size;
+	nv.data = packed;
+
+	if (ioctl(pf->dev, DIOCADDETHRULE, &nv))
+		err(1, "DIOCADDETHRULE");
+
+	free(packed);
+	nvlist_destroy(nvl);
 
 	return (0);
 }

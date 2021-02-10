@@ -464,6 +464,9 @@ pf_free_eth_rule(struct pf_keth_rule *rule)
 {
 	PF_RULES_WASSERT();
 
+	if (rule == NULL)
+		return;
+
 	if (rule->tag)
 		tag_unref(&V_pf_tags, rule->tag);
 #ifdef ALTQ
@@ -1684,79 +1687,150 @@ pf_pooladdr_to_kpooladdr(const struct pf_pooladdr *pool,
 	strlcpy(kpool->ifname, pool->ifname, sizeof(kpool->ifname));
 }
 
-static void
-pf_eth_rule_addr_to_keth_rule_addr(const struct pf_eth_rule_addr *rule,
+static int
+pf_nvl_addr_to_keth_rule_addr(const nvlist_t *nvl,
     struct pf_keth_rule_addr *krule)
 {
 	static const u_int8_t EMPTY_MAC[ETHER_ADDR_LEN] = { 0 };
+	size_t len;
 
-	memcpy(&krule->addr, &rule->addr, sizeof(krule->addr));
-	krule->neg = rule->neg;
+	if (nvlist_exists_binary(nvl, "addr")) {
+		(void)nvlist_get_binary(nvl, "addr", &len);
+		if (len != ETHER_ADDR_LEN)
+			return (EINVAL);
+
+		memcpy(&krule->addr, nvlist_get_binary(nvl, "addr", &len),
+		    sizeof(krule->addr));
+	}
+
+	if (nvlist_exists_bool(nvl, "neg"))
+		krule->neg = nvlist_get_bool(nvl, "neg");
 
 	/* To make checks for 'is this address set?' easier. */
 	if (memcmp(krule->addr, EMPTY_MAC, ETHER_ADDR_LEN) != 0)
 		krule->isset = 1;
-}
-
-static void
-pf_keth_rule_addr_to_eth_rule_addr(const struct pf_keth_rule_addr *krule,
-    struct pf_eth_rule_addr *rule)
-{
-
-	memcpy(&rule->addr, &krule->addr, sizeof(rule->addr));
-	rule->neg = krule->neg;
-}
-
-static int
-pf_eth_rule_to_keth_rule(const struct pf_eth_rule *rule,
-    struct pf_keth_rule *krule)
-{
-	bzero(krule, sizeof(*krule));
-
-	krule->nr = rule->nr;
-
-	krule->quick = rule->quick;
-
-	strlcpy(krule->ifname, rule->ifname, sizeof(krule->ifname));
-	krule->ifnot = rule->ifnot;
-	krule->direction = rule->direction;
-	krule->proto = rule->proto;
-	pf_eth_rule_addr_to_keth_rule_addr(&rule->src, &krule->src);
-	pf_eth_rule_addr_to_keth_rule_addr(&rule->dst, &krule->dst);
-
-	strlcpy(krule->qname, rule->qname, PF_QNAME_SIZE);
-	strlcpy(krule->tagname, rule->tagname, PF_TAG_NAME_SIZE);
-	krule->action = rule->action;
 
 	return (0);
 }
 
-static void
-pf_keth_rule_to_eth_rule(const struct pf_keth_rule *krule,
-    struct pf_eth_rule *rule)
+static nvlist_t*
+pf_keth_rule_addr_to_nvl(const struct pf_keth_rule_addr *krule)
 {
-	bzero(rule, sizeof(*rule));
+	nvlist_t *nvl;
 
-	rule->nr = krule->nr;
+	nvl = nvlist_create(0);
+	if (nvl == NULL)
+		return (NULL);
 
-	rule->quick = krule->quick;
+	nvlist_add_binary(nvl, "addr", &krule->addr, sizeof(krule->addr));
+	nvlist_add_bool(nvl, "neg", krule->neg);
 
-	strlcpy(rule->ifname, krule->ifname, sizeof(rule->ifname));
-	rule->ifnot = krule->ifnot;
-	rule->direction = krule->direction;
-	rule->proto = krule->proto;
-	pf_keth_rule_addr_to_eth_rule_addr(&krule->src, &rule->src);
-	pf_keth_rule_addr_to_eth_rule_addr(&krule->dst, &rule->dst);
+	return (nvl);
+}
 
-	rule->evaluations = counter_u64_fetch(krule->evaluations);
-	for (int i = 0; i < 2; i++) {
-		rule->packets[i] = counter_u64_fetch(krule->packets[i]);
-		rule->bytes[i] = counter_u64_fetch(krule->bytes[i]);
+static int
+pf_nvl_to_keth_rule(const nvlist_t *nvl,
+    struct pf_keth_rule *krule)
+{
+	int error;
+
+	bzero(krule, sizeof(*krule));
+
+	if (! nvlist_exists_number(nvl, "nr"))
+		return (EBADMSG);
+	krule->nr = nvlist_get_number(nvl, "nr");
+
+	if (nvlist_exists_bool(nvl, "quick"))
+		krule->quick = nvlist_get_bool(nvl, "quick");
+
+	if (nvlist_exists_string(nvl, "ifname"))
+		strlcpy(krule->ifname, nvlist_get_string(nvl, "ifname"),
+		    sizeof(krule->ifname));
+
+	if (nvlist_exists_bool(nvl, "ifnot"))
+		krule->ifnot = nvlist_get_bool(nvl, "ifnot");
+
+	if (nvlist_exists_number(nvl, "direction"))
+		krule->direction = nvlist_get_number(nvl, "direction");
+
+	if (nvlist_exists_number(nvl, "proto"))
+		krule->proto = nvlist_get_number(nvl, "proto");
+
+	if (nvlist_exists_nvlist(nvl, "src")) {
+		error = pf_nvl_addr_to_keth_rule_addr(nvlist_get_nvlist(nvl,
+			    "src"), &krule->src);
+		if (error)
+			return (error);
+	}
+	if (nvlist_exists_nvlist(nvl, "dst")) {
+		error = pf_nvl_addr_to_keth_rule_addr(nvlist_get_nvlist(nvl,
+			    "dst"), &krule->dst);
+		if (error)
+			return (error);
 	}
 
-	strlcpy(rule->qname, krule->qname, PF_QNAME_SIZE);
-	strlcpy(rule->tagname, krule->tagname, PF_TAG_NAME_SIZE);
-	rule->action = krule->action;
+	if (nvlist_exists(nvl, "qname"))
+		strlcpy(krule->qname, nvlist_get_string(nvl, "qname"),
+		    PF_QNAME_SIZE);
+
+	if (nvlist_exists_string(nvl, "tagname"))
+		strlcpy(krule->tagname, nvlist_get_string(nvl, "tagname"),
+		    PF_TAG_NAME_SIZE);
+
+	if (! nvlist_exists_number(nvl, "action"))
+		return (EBADMSG);
+	krule->action = nvlist_get_number(nvl, "action");
+
+	return (0);
+}
+
+static nvlist_t*
+pf_keth_rule_to_nvl(const struct pf_keth_rule *krule)
+{
+	nvlist_t *nvl, *addr;
+
+	nvl = nvlist_create(0);
+	if (nvl == NULL)
+		return (NULL);
+
+	nvlist_add_number(nvl, "nr", krule->nr);
+	nvlist_add_bool(nvl, "quick", krule->quick);
+	nvlist_add_string(nvl, "ifname", krule->ifname);
+	nvlist_add_bool(nvl, "ifnot", krule->ifnot);
+	nvlist_add_number(nvl, "direction", krule->direction);
+	nvlist_add_number(nvl, "proto", krule->proto);
+
+	addr = pf_keth_rule_addr_to_nvl(&krule->src);
+	if (addr == NULL) {
+		nvlist_destroy(nvl);
+		return (NULL);
+	}
+	nvlist_add_nvlist(nvl, "src", addr);
+
+	addr = pf_keth_rule_addr_to_nvl(&krule->dst);
+	if (addr == NULL) {
+		nvlist_destroy(nvl);
+		return (NULL);
+	}
+	nvlist_add_nvlist(nvl, "dst", addr);
+
+	nvlist_add_number(nvl, "evaluations",
+	    counter_u64_fetch(krule->evaluations));
+	nvlist_add_number(nvl, "packets-in",
+	    counter_u64_fetch(krule->packets[0]));
+	nvlist_add_number(nvl, "packets-out",
+	    counter_u64_fetch(krule->packets[1]));
+	nvlist_add_number(nvl, "bytes-in",
+	    counter_u64_fetch(krule->bytes[0]));
+	nvlist_add_number(nvl, "bytes-out",
+	    counter_u64_fetch(krule->bytes[1]));
+
+	nvlist_add_string(nvl, "qname", krule->qname);
+	nvlist_add_string(nvl, "tagname", krule->tagname);
+
+	nvlist_add_number(nvl, "action", krule->action);
+
+	return (nvl);
 }
 
 static void
@@ -2483,72 +2557,165 @@ pfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags, struct thread *td
 		break;
 
 	case DIOCGETETHRULES: {
-		struct pfioc_eth_rule	*pr = (struct pfioc_eth_rule *)addr;
+		struct pfioc_nv		*nv = (struct pfioc_nv *)addr;
+		nvlist_t		*nvl;
+		void			*packed;
 		struct pf_keth_rule	*tail;
+		u_int32_t		 ticket, nr;
+
+		nvl = NULL;
+		packed = NULL;
+
+#define	ERROUT(x)	do { error = (x); goto DIOCGETETHRULES_error; } while (0)
+
+		nvl = nvlist_create(0);
+		if (nvl == NULL)
+			ERROUT(ENOMEM);
 
 		PF_RULES_RLOCK();
 
-		pr->ticket = V_pf_keth->ticket;
+		ticket = V_pf_keth->ticket;
 		tail = TAILQ_LAST(&V_pf_keth->rules, pf_keth_rules);
 		if (tail)
-			pr->nr = tail->nr + 1;
+			nr = tail->nr + 1;
 		else
-			pr->nr = 0;
+			nr = 0;
 
 		PF_RULES_RUNLOCK();
+
+		nvlist_add_number(nvl, "ticket", ticket);
+		nvlist_add_number(nvl, "nr", nr);
+
+		packed = nvlist_pack(nvl, &nv->len);
+		if (packed == NULL)
+			ERROUT(ENOMEM);
+
+		if (nv->size == 0)
+			ERROUT(0);
+		else if (nv->size < nv->len)
+			ERROUT(ENOSPC);
+
+		error = copyout(packed, nv->data, nv->len);
+
+#undef ERROUT
+DIOCGETETHRULES_error:
+		free(packed, M_TEMP);
+		nvlist_destroy(nvl);
 		break;
 	}
 
 	case DIOCGETETHRULE: {
-		struct pfioc_eth_rule	*pr = (struct pfioc_eth_rule *)addr;
-		struct pf_keth_rule	*rule;
+		struct epoch_tracker	 et;
+		struct pfioc_nv		*nv = (struct pfioc_nv *)addr;
+		nvlist_t		*nvl = NULL;
+		void			*nvlpacked = NULL;
+		struct pf_keth_rule	*rule = NULL;
+		u_int32_t		 ticket, nr;
+
+#define ERROUT(x)	do { error = (x); goto DIOCGETETHRULE_error; } while (0)
+
+		nvlpacked = malloc(nv->len, M_TEMP, M_WAITOK);
+		if (nvlpacked == NULL)
+			ERROUT(ENOMEM);
+
+		error = copyin(nv->data, nvlpacked, nv->len);
+		if (error)
+			ERROUT(error);
+
+		nvl = nvlist_unpack(nvlpacked, nv->len, 0);
+		if (! nvlist_exists_number(nvl, "ticket"))
+			ERROUT(EBADMSG);
+		ticket = nvlist_get_number(nvl, "ticket");
+
+		if (! nvlist_exists_number(nvl, "nr"))
+			ERROUT(EBADMSG);
+		nr = nvlist_get_number(nvl, "nr");
+
+		nvlist_destroy(nvl);
+		nvl = NULL;
+		free(nvlpacked, M_TEMP);
+		nvlpacked = NULL;
+
+		nvl = nvlist_create(0);
 
 		PF_RULES_RLOCK();
-
-		if (pr->ticket != V_pf_keth->ticket) {
+		if (ticket != V_pf_keth->ticket) {
 			PF_RULES_RUNLOCK();
-			error = EBUSY;
-			break;
+			ERROUT(EBUSY);
 		}
-
 		rule = TAILQ_FIRST(&V_pf_keth->rules);
-		while ((rule != NULL) && (rule->nr != pr->nr))
+		while ((rule != NULL) && (rule->nr != nr))
 			rule = TAILQ_NEXT(rule, entries);
 		if (rule == NULL) {
 			PF_RULES_RUNLOCK();
-			error = ENOENT;
-			break;
+			ERROUT(ENOENT);
 		}
-
-		pf_keth_rule_to_eth_rule(rule, &pr->rule);
-
+		/* Make sure rule can't go away. */
+		NET_EPOCH_ENTER(et);
 		PF_RULES_RUNLOCK();
+		nvl = pf_keth_rule_to_nvl(rule);
+		NET_EPOCH_EXIT(et);
+		if (nvl == NULL)
+			ERROUT(ENOMEM);
+
+		nvlpacked = nvlist_pack(nvl, &nv->len);
+		if (nvlpacked == NULL)
+			ERROUT(ENOMEM);
+
+		if (nv->size == 0)
+			ERROUT(0);
+		else if (nv->size < nv->len)
+			ERROUT(ENOSPC);
+
+		error = copyout(nvlpacked, nv->data, nv->len);
+
+#undef ERROUT
+DIOCGETETHRULE_error:
+		free(nvlpacked, M_TEMP);
+		nvlist_destroy(nvl);
 		break;
 	}
 
 	case DIOCADDETHRULE: {
-		struct pfioc_eth_rule	*pr = (struct pfioc_eth_rule *)addr;
-		struct pf_keth_rule	*rule;
+		struct pfioc_nv		*nv = (struct pfioc_nv *)addr;
+		nvlist_t		*nvl = NULL;
+		void			*nvlpacked = NULL;
+		struct pf_keth_rule	*rule = NULL;
 		struct pfi_kkif		*kif = NULL;
 
-		if (pr->ticket != V_pf_keth_inactive->ticket) {
+#define ERROUT(x)	do { error = (x); goto DIOCADDETHRULE_error; } while (0)
+
+		nvlpacked = malloc(nv->len, M_TEMP, M_WAITOK);
+		if (nvlpacked == NULL)
+			ERROUT(ENOMEM);
+
+		error = copyin(nv->data, nvlpacked, nv->len);
+		if (error)
+			ERROUT(error);
+
+		nvl = nvlist_unpack(nvlpacked, nv->len, 0);
+		if (nvl == NULL)
+			ERROUT(EBADMSG);
+
+		if (! nvlist_exists_number(nvl, "ticket"))
+			ERROUT(EBADMSG);
+
+		if (nvlist_get_number(nvl, "ticket") !=
+		    V_pf_keth_inactive->ticket) {
 			DPFPRINTF(PF_DEBUG_MISC,
-			    ("ticket: %d != %d\n", pr->ticket,
+			    ("ticket: %d != %d\n",
+			    (u_int32_t)nvlist_get_number(nvl, "ticket"),
 			    V_pf_keth_inactive->ticket));
-			error = EBUSY;
-			break;
+			ERROUT(EBUSY);
 		}
 
 		rule = malloc(sizeof(*rule), M_PFRULE, M_WAITOK);
-		if (rule == NULL) {
-			error = ENOMEM;
-			break;
-		}
-		error = pf_eth_rule_to_keth_rule(&pr->rule, rule);
-		if (error != 0) {
-			free(rule, M_PFRULE);
-			break;
-		}
+		if (rule == NULL)
+			ERROUT(ENOMEM);
+
+		error = pf_nvl_to_keth_rule(nvl, rule);
+		if (error != 0)
+			ERROUT(error);
 
 		if (rule->ifname[0])
 			kif = pf_kkif_create(M_WAITOK);
@@ -2582,12 +2749,17 @@ pfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags, struct thread *td
 		if (error) {
 			pf_free_eth_rule(rule);
 			PF_RULES_WUNLOCK();
-			break;
+			ERROUT(error);
 		}
 
 		TAILQ_INSERT_TAIL(&V_pf_keth_inactive->rules, rule, entries);
 
 		PF_RULES_WUNLOCK();
+
+#undef ERROUT
+DIOCADDETHRULE_error:
+		nvlist_destroy(nvl);
+		free(nvlpacked, M_TEMP);
 		break;
 	}
 

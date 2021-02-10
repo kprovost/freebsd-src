@@ -1102,12 +1102,6 @@ struct pfioc_pooladdr {
 	struct pf_pooladdr	 addr;
 };
 
-struct pfioc_eth_rule {
-	u_int32_t		 ticket;
-	u_int32_t		 nr;
-	struct pf_eth_rule	 rule;
-};
-
 struct pfioc_rule {
 	u_int32_t	 action;
 	u_int32_t	 ticket;
@@ -1414,9 +1408,9 @@ struct pf_ifspeed_v1 {
 #define	DIOCGIFSPEEDV0	_IOWR('D', 92, struct pf_ifspeed_v0)
 #define	DIOCGIFSPEEDV1	_IOWR('D', 92, struct pf_ifspeed_v1)
 
-#define DIOCADDETHRULE		_IOWR('D', 93, struct pfioc_eth_rule)
-#define DIOCGETETHRULE		_IOWR('D', 94, struct pfioc_eth_rule)
-#define DIOCGETETHRULES		_IOWR('D', 95, struct pfioc_eth_rule)
+#define DIOCADDETHRULE		_IOWR('D', 93, struct pfioc_nv)
+#define DIOCGETETHRULE		_IOWR('D', 94, struct pfioc_nv)
+#define DIOCGETETHRULES		_IOWR('D', 95, struct pfioc_nv)
 
 /*
  * Compatibility and convenience macros

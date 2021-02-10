@@ -50,6 +50,7 @@ __FBSDID("$FreeBSD$");
 #include <net/pfvar.h>
 #include <arpa/inet.h>
 
+#include <assert.h>
 #include <search.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,6 +72,7 @@ void		 print_ugid (u_int8_t, unsigned, unsigned, const char *, unsigned);
 void		 print_flags (u_int8_t);
 void		 print_fromto(struct pf_rule_addr *, pf_osfp_t,
 		    struct pf_rule_addr *, u_int8_t, u_int8_t, int, int);
+void		 print_eth_rule_addr(const nvlist_t *);
 int		 ifa_skip_if(const char *filter, struct node_host *p);
 
 struct node_host	*host_if(const char *, int);
@@ -697,47 +699,54 @@ print_src_node(struct pf_src_node *sn, int opts)
 }
 
 void
-print_eth_rule(struct pf_eth_rule *r, int rule_numbers)
+print_eth_rule_addr(const nvlist_t *nvl)
+{
+	u_int8_t *addr;
+	size_t len;
+
+	if (nvlist_get_bool(nvl, "neg"))
+		printf(" ! ");
+
+	addr = (u_int8_t *)nvlist_get_binary(nvl, "addr", &len);
+	assert(len == ETHER_ADDR_LEN);
+
+	printf("%02x:%02x:%02x:%02x:%02x:%02x", addr[0], addr[1], addr[2], 
+	    addr[3], addr[4], addr[5]);
+}
+
+void
+print_eth_rule(const nvlist_t *nvl, int rule_numbers)
 {
 	static const char *actiontypes[] = { "pass", "block" };
 
 	if (rule_numbers)
-		printf("@%u ", r->nr);
+		printf("@%u ", (u_int32_t)nvlist_get_number(nvl, "nr"));
 
-	printf("ether %s", actiontypes[r->action]);
-	if (r->direction == PF_IN)
+	printf("ether %s", actiontypes[nvlist_get_number(nvl, "action")]);
+	if (nvlist_get_number(nvl, "direction") == PF_IN)
 		printf(" in");
-	else if (r->direction == PF_OUT)
+	else if (nvlist_get_number(nvl, "direction") == PF_OUT)
 		printf(" out");
 
-	if (r->quick)
+	if (nvlist_get_bool(nvl, "quick"))
 		printf(" quick");
-	if (r->ifname[0]) {
-		if (r->ifnot)
-			printf(" on ! %s", r->ifname);
-		else
-			printf(" on %s", r->ifname);
+	if (nvlist_get_string(nvl, "ifname")[0]) {
+		printf(" on %s%s", nvlist_get_bool(nvl, "ifnot") ? "! " : "",
+		    nvlist_get_string(nvl, "ifname"));
 	}
-	if (r->proto)
-		printf(" proto 0x%04x", r->proto);
+	if (nvlist_get_number(nvl, "proto"))
+		printf(" proto 0x%04x",
+		    (u_int16_t)nvlist_get_number(nvl, "proto"));
 
 	printf(" from ");
-	if (r->src.neg)
-		printf(" ! ");
-	printf("%02x:%02x:%02x:%02x:%02x:%02x", r->src.addr[0],
-	    r->src.addr[1], r->src.addr[2], r->src.addr[3], r->src.addr[4],
-	    r->src.addr[5]);
+	print_eth_rule_addr(nvlist_get_nvlist(nvl, "src"));
 	printf(" to ");
-	if (r->dst.neg)
-		printf(" ! ");
-	printf("%02x:%02x:%02x:%02x:%02x:%02x", r->dst.addr[0],
-	    r->dst.addr[1], r->dst.addr[2], r->dst.addr[3], r->dst.addr[4],
-	    r->dst.addr[5]);
+	print_eth_rule_addr(nvlist_get_nvlist(nvl, "dst"));
 
-	if (r->qname[0])
-		printf(" queue %s", r->qname);
-	if (r->tagname[0])
-		printf(" tag %s", r->tagname);
+	if (nvlist_get_string(nvl, "qname")[0])
+		printf(" queue %s", nvlist_get_string(nvl, "qname"));
+	if (nvlist_get_string(nvl, "tagname")[0])
+		printf(" tag %s", nvlist_get_string(nvl, "tagname"));
 }
 
 void

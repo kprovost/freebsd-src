@@ -338,6 +338,12 @@ union pf_keth_rule_ptr {
 };
 
 struct pf_keth_rule {
+#define	PFL_SKIP_IFP		0
+#define	PFL_SKIP_DIR		1
+#define	PFL_SKIP_PROTO		2
+#define	PFL_SKIP_SRC_ADDR	3
+#define	PFL_SKIP_DST_ADDR	4
+#define	PFL_SKIP_COUNT		5
 	union pf_keth_rule_ptr	 skip[PFL_SKIP_COUNT];
 
 	TAILQ_ENTRY(pf_keth_rule)	entries;

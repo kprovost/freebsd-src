@@ -75,6 +75,37 @@
 
 struct pfr_buffer;	/* forward definition */
 
+struct pf_eth_rule_addr {
+	u_int8_t	addr[ETHER_ADDR_LEN];
+	u_int8_t	neg;
+};
+
+struct pf_eth_rule {
+	u_int32_t		 nr;
+
+	u_int8_t		 quick;
+
+	/* Filter */
+	char			 ifname[IFNAMSIZ];
+	u_int8_t		 ifnot;
+	u_int8_t		 direction;
+	u_int16_t		 proto;
+	struct pf_eth_rule_addr	src, dst;
+
+	/* Stats */
+	uint64_t		 evaluations;
+	uint64_t		 packets[2];
+	uint64_t		 bytes[2];
+
+	/* Action */
+	char			 qname[PF_QNAME_SIZE];
+	char			 tagname[PF_TAG_NAME_SIZE];
+	u_int8_t		 action;
+
+	TAILQ_ENTRY(pf_eth_rule)	entries;
+};
+
+TAILQ_HEAD(pf_eth_rules, pf_eth_rule);
 
 struct pfctl {
 	int dev;

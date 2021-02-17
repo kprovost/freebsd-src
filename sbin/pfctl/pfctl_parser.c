@@ -72,7 +72,7 @@ void		 print_ugid (u_int8_t, unsigned, unsigned, const char *, unsigned);
 void		 print_flags (u_int8_t);
 void		 print_fromto(struct pf_rule_addr *, pf_osfp_t,
 		    struct pf_rule_addr *, u_int8_t, u_int8_t, int, int);
-void		 print_eth_rule_addr(const nvlist_t *);
+void		 print_eth_rule_addr(const char *, const nvlist_t *);
 int		 ifa_skip_if(const char *filter, struct node_host *p);
 
 struct node_host	*host_if(const char *, int);
@@ -699,16 +699,28 @@ print_src_node(struct pf_src_node *sn, int opts)
 }
 
 void
-print_eth_rule_addr(const nvlist_t *nvl)
+print_eth_rule_addr(const char *prefix, const nvlist_t *nvl)
 {
 	u_int8_t *addr;
 	size_t len;
-
-	if (nvlist_get_bool(nvl, "neg"))
-		printf(" ! ");
+	int i;
 
 	addr = (u_int8_t *)nvlist_get_binary(nvl, "addr", &len);
 	assert(len == ETHER_ADDR_LEN);
+
+	for (i = 0; i < ETHER_ADDR_LEN; i++) {
+		if (addr[i] != 0)
+			break;
+	}
+
+	/* Unset, so don't print anything. */
+	if (i == ETHER_ADDR_LEN)
+		return;
+
+	printf("%s", prefix);
+
+	if (nvlist_get_bool(nvl, "neg"))
+		printf(" ! ");
 
 	printf("%02x:%02x:%02x:%02x:%02x:%02x", addr[0], addr[1], addr[2], 
 	    addr[3], addr[4], addr[5]);
@@ -738,10 +750,8 @@ print_eth_rule(const nvlist_t *nvl, int rule_numbers)
 		printf(" proto 0x%04x",
 		    (u_int16_t)nvlist_get_number(nvl, "proto"));
 
-	printf(" from ");
-	print_eth_rule_addr(nvlist_get_nvlist(nvl, "src"));
-	printf(" to ");
-	print_eth_rule_addr(nvlist_get_nvlist(nvl, "dst"));
+	print_eth_rule_addr(" from ", nvlist_get_nvlist(nvl, "src"));
+	print_eth_rule_addr(" to ", nvlist_get_nvlist(nvl, "dst"));
 
 	if (nvlist_get_string(nvl, "qname")[0])
 		printf(" queue %s", nvlist_get_string(nvl, "qname"));

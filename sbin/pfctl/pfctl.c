@@ -97,7 +97,7 @@ int	 pfctl_get_pool(int, struct pfctl_pool *, u_int32_t, u_int32_t, int,
 	    char *);
 void	 pfctl_print_eth_rule_counters(const nvlist_t *, int);
 void	 pfctl_print_rule_counters(struct pfctl_rule *, int);
-int	 pfctl_show_eth_rules(int, int);
+int	 pfctl_show_eth_rules(int, int, enum pfctl_show);
 int	 pfctl_show_rules(int, char *, int, enum pfctl_show, char *, int);
 int	 pfctl_show_nat(int, int, char *);
 int	 pfctl_show_src_nodes(int, int);
@@ -1011,7 +1011,7 @@ pfctl_print_title(char *title)
 }
 
 int
-pfctl_show_eth_rules(int dev, int opts)
+pfctl_show_eth_rules(int dev, int opts, enum pfctl_show format)
 {
 	struct pfioc_nv nv;
 	u_int8_t buf[1024];
@@ -1044,6 +1044,9 @@ pfctl_show_eth_rules(int dev, int opts)
 		nvlist_add_number(nvl, "ticket", ticket);
 		nvlist_add_number(nvl, "nr", nr);
 
+		if (opts & PF_OPT_CLRRULECTRS)
+			nvlist_add_bool(nvl, "clear", true);
+
 		data = nvlist_pack(nvl, &len);
 		nv.data = buf;
 		memcpy(buf, data, len);
@@ -1065,9 +1068,12 @@ pfctl_show_eth_rules(int dev, int opts)
 		if (nvl == NULL)
 			errx(1, "DIOCGETETHRULE unpack");
 
-		print_eth_rule(nvl, opts & (PF_OPT_VERBOSE2 | PF_OPT_DEBUG));
-		printf("\n");
-		pfctl_print_eth_rule_counters(nvl, opts);
+		if (format != PFCTL_SHOW_NOTHING) {
+			print_eth_rule(nvl,
+			    opts & (PF_OPT_VERBOSE2 | PF_OPT_DEBUG));
+			printf("\n");
+			pfctl_print_eth_rule_counters(nvl, opts);
+		}
 	}
 
 	return (0);
@@ -2620,13 +2626,13 @@ main(int argc, char *argv[])
 			pfctl_show_limits(dev, opts);
 			break;
 		case 'e':
-			pfctl_show_eth_rules(dev, opts);
+			pfctl_show_eth_rules(dev, opts, 0);
 			break;
 		case 'a':
 			opts |= PF_OPT_SHOWALL;
 			pfctl_load_fingerprints(dev, opts);
 
-			pfctl_show_eth_rules(dev, opts);
+			pfctl_show_eth_rules(dev, opts, 0);
 
 			pfctl_show_nat(dev, opts, anchorname);
 			pfctl_show_rules(dev, path, opts, 0, anchorname, 0);
@@ -2653,9 +2659,11 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if ((opts & PF_OPT_CLRRULECTRS) && showopt == NULL)
+	if ((opts & PF_OPT_CLRRULECTRS) && showopt == NULL) {
+		pfctl_show_eth_rules(dev, opts, PFCTL_SHOW_NOTHING);
 		pfctl_show_rules(dev, path, opts, PFCTL_SHOW_NOTHING,
 		    anchorname, 0);
+	}
 
 	if (clearopt != NULL) {
 		if (anchorname[0] == '_' || strstr(anchorname, "/_") != NULL)

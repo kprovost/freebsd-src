@@ -94,6 +94,13 @@ __FBSDID("$FreeBSD$");
 #include <netinet/udp.h>
 #include <netinet/udp_var.h>
 
+/* dummynet */
+#include <netinet/ip_dummynet.h>
+#include <netinet/ip_fw.h>
+#include <netpfil/ipfw/dn_heap.h>
+#include <netpfil/ipfw/ip_fw_private.h>
+#include <netpfil/ipfw/ip_dn_private.h>
+
 #ifdef INET6
 #include <netinet/ip6.h>
 #include <netinet/icmp6.h>
@@ -6035,6 +6042,8 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 			goto done;
 		}
 		pd.p_len = pd.tot_len - off - (pd.hdr.tcp.th_off << 2);
+		pd.sport = &pd.hdr.tcp.th_sport;
+		pd.dport = &pd.hdr.tcp.th_dport;
 		if ((pd.hdr.tcp.th_flags & TH_ACK) && pd.p_len == 0)
 			pqid = 1;
 		action = pf_normalize_tcp(dir, kif, m, 0, off, h, &pd);
@@ -6060,6 +6069,8 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 			log = action != PF_PASS;
 			goto done;
 		}
+		pd.sport = &pd.hdr.udp.uh_sport;
+		pd.dport = &pd.hdr.udp.uh_dport;
 		if (pd.hdr.udp.uh_dport == 0 ||
 		    ntohs(pd.hdr.udp.uh_ulen) > m->m_pkthdr.len - off ||
 		    ntohs(pd.hdr.udp.uh_ulen) < sizeof(struct udphdr)) {
@@ -6171,6 +6182,57 @@ done:
 		}
 	}
 #endif /* ALTQ */
+
+	if (r->dnpipe && ip_dn_io_ptr != NULL) {
+		struct ip_fw_args dnflow;
+
+		memset(&dnflow, 0, sizeof(dnflow));
+
+		if (pd.pf_mtag == NULL &&
+		    ((pd.pf_mtag = pf_get_mtag(m)) == NULL)) {
+			action = PF_DROP;
+			REASON_SET(&reason, PFRES_MEMORY);
+			if (s)
+				PF_STATE_UNLOCK(s);
+			return (action);
+		}
+
+		if (pd.dport != NULL)
+			dnflow.f_id.dst_port = ntohs(*pd.dport);
+		if (pd.sport != NULL)
+			dnflow.f_id.src_port = ntohs(*pd.sport);
+
+		if (dir == PF_IN)
+			dnflow.flags |= IPFW_ARGS_IN;
+		else
+			dnflow.flags |= IPFW_ARGS_OUT;
+
+		if (pqid || (pd.tos & IPTOS_LOWDELAY))
+			dnflow.rule.info = r->pdnpipe;
+		else
+			dnflow.rule.info = r->dnpipe;
+
+		if (r->free_flags & PFRULE_DN_IS_PIPE)
+			dnflow.rule.info |= IPFW_IS_PIPE;
+
+		dnflow.f_id.addr_type = 4; /* IPv4 type */
+		dnflow.f_id.proto = pd.proto;
+		dnflow.f_id.src_ip = ntohl(pd.src->v4.s_addr);
+		dnflow.f_id.dst_ip = ntohl(pd.dst->v4.s_addr);
+		dnflow.f_id.extra = dnflow.rule.info;
+
+		ip_dn_io_ptr(m0, &dnflow);
+
+		if (*m0 == NULL) {
+			if (s)
+				PF_STATE_UNLOCK(s);
+			return (action);
+		} else {
+			/* This is dummynet fast io processing */
+			m_tag_delete(*m0, m_tag_first(*m0));
+			pd.pf_mtag->flags &= ~PF_PACKET_LOOPED;
+		}
+	}
 
 	/*
 	 * connections redirected to loopback should not match sockets

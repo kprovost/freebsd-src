@@ -5982,10 +5982,11 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 
 	PF_RULES_RLOCK();
 
-	if (ip_divert_ptr != NULL &&
+	if ((ip_divert_ptr != NULL || ip_dn_io_ptr != NULL) &&
 	    ((ipfwtag = m_tag_locate(m, MTAG_IPFW_RULE, 0, NULL)) != NULL)) {
 		struct ipfw_rule_ref *rr = (struct ipfw_rule_ref *)(ipfwtag+1);
-		if (rr->info & IPFW_IS_DIVERT && rr->rulenum == 0) {
+		if ((rr->info & IPFW_IS_DIVERT && rr->rulenum == 0) ||
+		    (rr->info & IPFW_IS_DUMMYNET)) {
 			if (pd.pf_mtag == NULL &&
 			    ((pd.pf_mtag = pf_get_mtag(m)) == NULL)) {
 				action = PF_DROP;
@@ -6183,7 +6184,8 @@ done:
 	}
 #endif /* ALTQ */
 
-	if (r->dnpipe && ip_dn_io_ptr != NULL) {
+	if (r->dnpipe && ip_dn_io_ptr != NULL
+	    && !PACKET_LOOPED(&pd)) {
 		struct ip_fw_args dnflow;
 
 		memset(&dnflow, 0, sizeof(dnflow));
@@ -6212,6 +6214,7 @@ done:
 		else
 			dnflow.rule.info = r->dnpipe;
 
+		dnflow.rule.info |= IPFW_IS_DUMMYNET;
 		if (r->free_flags & PFRULE_DN_IS_PIPE)
 			dnflow.rule.info |= IPFW_IS_PIPE;
 

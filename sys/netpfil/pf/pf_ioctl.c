@@ -284,6 +284,7 @@ pfattach_vnet(void)
 	pfr_initialize();
 	pfi_initialize_vnet();
 	pf_normalize_init();
+	pf_syncookies_init();
 
 	V_pf_limits[PF_LIMIT_STATES].limit = PFSTATE_HIWAT;
 	V_pf_limits[PF_LIMIT_SRC_NODES].limit = PFSNODE_HIWAT;

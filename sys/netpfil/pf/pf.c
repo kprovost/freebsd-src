@@ -239,11 +239,6 @@ static void		 pf_change_icmp(struct pf_addr *, u_int16_t *,
 			    struct pf_addr *, struct pf_addr *, u_int16_t,
 			    u_int16_t *, u_int16_t *, u_int16_t *,
 			    u_int16_t *, u_int8_t, sa_family_t);
-static void		 pf_send_tcp(const struct pf_krule *, sa_family_t,
-			    const struct pf_addr *, const struct pf_addr *,
-			    u_int16_t, u_int16_t, u_int32_t, u_int32_t,
-			    u_int8_t, u_int16_t, u_int16_t, u_int8_t, int,
-			    u_int16_t);
 static void		 pf_send_icmp(struct mbuf *, u_int8_t, u_int8_t,
 			    sa_family_t, struct pf_krule *);
 static void		 pf_detach_state(struct pf_state *);
@@ -285,10 +280,6 @@ static int		 pf_test_state_icmp(struct pf_state **, int,
 			    void *, struct pf_pdesc *, u_short *);
 static int		 pf_test_state_other(struct pf_state **, int,
 			    struct pfi_kkif *, struct mbuf *, struct pf_pdesc *);
-static u_int8_t		 pf_get_wscale(struct mbuf *, int, u_int16_t,
-			    sa_family_t);
-static u_int16_t	 pf_get_mss(struct mbuf *, int, u_int16_t,
-			    sa_family_t);
 static u_int16_t	 pf_calc_mss(struct pf_addr *, sa_family_t,
 				int, u_int16_t);
 static int		 pf_check_proto_cksum(struct mbuf *, int, int,
@@ -2445,14 +2436,13 @@ pf_modulate_sack(struct mbuf *m, int off, struct pf_pdesc *pd,
 	return (copyback);
 }
 
-static void
-pf_send_tcp(const struct pf_krule *r, sa_family_t af,
+struct mbuf *
+pf_build_tcp(const struct pf_krule *r, sa_family_t af,
     const struct pf_addr *saddr, const struct pf_addr *daddr,
     u_int16_t sport, u_int16_t dport, u_int32_t seq, u_int32_t ack,
     u_int8_t flags, u_int16_t win, u_int16_t mss, u_int8_t ttl, int tag,
     u_int16_t rtag)
 {
-	struct pf_send_entry *pfse;
 	struct mbuf	*m;
 	int		 len, tlen;
 #ifdef INET
@@ -2488,22 +2478,16 @@ pf_send_tcp(const struct pf_krule *r, sa_family_t af,
 		panic("%s: unsupported af %d", __func__, af);
 	}
 
-	/* Allocate outgoing queue entry, mbuf and mbuf tag. */
-	pfse = malloc(sizeof(*pfse), M_PFTEMP, M_NOWAIT);
-	if (pfse == NULL)
-		return;
 	m = m_gethdr(M_NOWAIT, MT_DATA);
-	if (m == NULL) {
-		free(pfse, M_PFTEMP);
-		return;
-	}
+	if (m == NULL)
+		return (NULL);
+
 #ifdef MAC
 	mac_netinet_firewall_send(m);
 #endif
 	if ((pf_mtag = pf_get_mtag(m)) == NULL) {
-		free(pfse, M_PFTEMP);
 		m_freem(m);
-		return;
+		return (NULL);
 	}
 	if (tag)
 		m->m_flags |= M_SKIP_FIREWALL;
@@ -2584,8 +2568,6 @@ pf_send_tcp(const struct pf_krule *r, sa_family_t af,
 		h->ip_len = htons(len);
 		h->ip_ttl = ttl ? ttl : V_ip_defttl;
 		h->ip_sum = 0;
-
-		pfse->pfse_type = PFSE_IP;
 		break;
 #endif /* INET */
 #ifdef INET6
@@ -2596,11 +2578,48 @@ pf_send_tcp(const struct pf_krule *r, sa_family_t af,
 
 		h6->ip6_vfc |= IPV6_VERSION;
 		h6->ip6_hlim = IPV6_DEFHLIM;
+		break;
+#endif /* INET6 */
+	}
 
+	return (m);
+}
+
+void
+pf_send_tcp(const struct pf_krule *r, sa_family_t af,
+    const struct pf_addr *saddr, const struct pf_addr *daddr,
+    u_int16_t sport, u_int16_t dport, u_int32_t seq, u_int32_t ack,
+    u_int8_t flags, u_int16_t win, u_int16_t mss, u_int8_t ttl, int tag,
+    u_int16_t rtag)
+{
+	struct pf_send_entry *pfse;
+	struct mbuf	*m;
+
+	m = pf_build_tcp(r, af, saddr, daddr, sport, dport, seq, ack, flags,
+	    win, mss, ttl, tag, rtag);
+	if (m == NULL)
+		return;
+
+	/* Allocate outgoing queue entry, mbuf and mbuf tag. */
+	pfse = malloc(sizeof(*pfse), M_PFTEMP, M_NOWAIT);
+	if (pfse == NULL) {
+		m_freem(m);
+		return;
+	}
+
+	switch (af) {
+#ifdef INET
+	case AF_INET:
+		pfse->pfse_type = PFSE_IP;
+		break;
+#endif /* INET */
+#ifdef INET6
+	case AF_INET6:
 		pfse->pfse_type = PFSE_IP6;
 		break;
 #endif /* INET6 */
 	}
+
 	pfse->pfse_m = m;
 	pf_send(pfse);
 }
@@ -3175,7 +3194,7 @@ pf_socket_lookup(int direction, struct pf_pdesc *pd, struct mbuf *m)
 	return (1);
 }
 
-static u_int8_t
+u_int8_t
 pf_get_wscale(struct mbuf *m, int off, u_int16_t th_off, sa_family_t af)
 {
 	int		 hlen;
@@ -3215,7 +3234,7 @@ pf_get_wscale(struct mbuf *m, int off, u_int16_t th_off, sa_family_t af)
 	return (wscale);
 }
 
-static u_int16_t
+u_int16_t
 pf_get_mss(struct mbuf *m, int off, u_int16_t th_off, sa_family_t af)
 {
 	int		 hlen;
@@ -3251,6 +3270,41 @@ pf_get_mss(struct mbuf *m, int off, u_int16_t th_off, sa_family_t af)
 		}
 	}
 	return (mss);
+}
+
+/* post: r  => (r[0] == type /\ r[1] >= min_typelen >= 2  "validity"
+ *                      /\ (eoh - r) >= min_typelen >= 2  "safety"  )
+ *
+ * warning: r + r[1] may exceed opts bounds for r[1] > min_typelen
+ */
+static uint8_t*
+pf_find_tcpopt(uint8_t *opt, uint8_t *opts, size_t hlen, uint8_t type,
+    uint8_t min_typelen)
+{
+	uint8_t *eoh = opts + hlen;
+
+	if (min_typelen < 2)
+		return (NULL);
+
+	while ((eoh - opt) >= min_typelen) {
+		switch (*opt) {
+		case TCPOPT_EOL:
+			/* FALLTHROUGH - Workaround the failure of some
+			   systems to NOP-pad their bzero'd option buffers,
+			   producing spurious EOLs */
+		case TCPOPT_NOP:
+			opt++;
+			continue;
+		default:
+			if (opt[0] == type &&
+			    opt[1] >= min_typelen)
+				return (opt);
+		}
+
+		opt += MAX(opt[1], 2); /* evade infinite loops */
+	}
+
+	return (NULL);
 }
 
 static u_int16_t
@@ -6046,6 +6100,15 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 			goto done;
 		}
 		pd.p_len = pd.tot_len - off - (pd.hdr.tcp.th_off << 2);
+
+		/* Respond to SYN with a syncookie. */
+		if ((pd.hdr.tcp.th_flags & (TH_SYN|TH_ACK|TH_RST)) == TH_SYN &&
+		    pf_synflood_check(&pd)) {
+			pf_syncookie_send(m, off, &pd);
+			action = PF_DROP;
+			break;
+		}
+
 		if ((pd.hdr.tcp.th_flags & TH_ACK) && pd.p_len == 0)
 			pqid = 1;
 		action = pf_normalize_tcp(dir, kif, m, 0, off, h, &pd);
@@ -6059,9 +6122,27 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 			r = s->rule.ptr;
 			a = s->anchor.ptr;
 			log = s->log;
-		} else if (s == NULL)
+		} else if (s == NULL) {
+			/* Validate remote SYN|ACK, re-create original SYN if valid */
+			if ((th.th_flags & (TH_SYN|TH_ACK|TH_RST)) ==
+			    (TH_SYN|TH_ACK) && pf_syncookie_validate(&pd)) {
+				struct mbuf *msyn;
+
+				msyn = pf_syncookie_recreate_syn(h->ip_ttl, off, &pd);
+				if (msyn == NULL) {
+					action = PF_DROP;
+					break;
+				}
+
+				action = pf_test(dir, pflags, ifp, &msyn, inp);
+				m_freem(msyn);
+				/* XXX Do we need to do anything else? */
+
+			}
+			/* KP XXX if (SYN|ACK) pf_syncookie_validate() */
 			action = pf_test_rule(&r, &s, dir, kif, m, off, &pd,
 			    &a, &ruleset, inp);
+		}
 		break;
 	}
 

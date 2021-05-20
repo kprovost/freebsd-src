@@ -994,6 +994,13 @@ struct pf_pdesc {
 			counter_u64_add(V_pf_status.counters[x], 1); \
 	} while (0)
 
+enum pf_syncookies_mode {
+	PF_SYNCOOKIES_NEVER = 0,
+	PF_SYNCOOKIES_ALWAYS = 1,
+	/* PF_SYNCOOKIES_ADAPTIVE = 2, */
+	PF_SYNCOOKIES_MODE_MAX = PF_SYNCOOKIES_ALWAYS
+};
+
 struct pf_kstatus {
 	counter_u64_t	counters[PFRES_MAX]; /* reason for passing/dropping */
 	counter_u64_t	lcounters[LCNT_MAX]; /* limit counters */
@@ -1008,6 +1015,9 @@ struct pf_kstatus {
 	char		ifname[IFNAMSIZ];
 	uint8_t		pf_chksum[PF_MD5_DIGEST_LENGTH];
 	bool		keep_counters;
+	enum pf_syncookies_mode	syncookies_mode;
+	bool		syncookies_active;
+	uint32_t	syncookies_inflight[2]; /* XXX Scaling issue! */
 };
 
 struct pf_divert {
@@ -1336,6 +1346,8 @@ struct pfioc_iface {
 #define	DIOCCLRIFFLAG	_IOWR('D', 90, struct pfioc_iface)
 #define	DIOCKILLSRCNODES	_IOWR('D', 91, struct pfioc_src_node_kill)
 #define	DIOCKEEPCOUNTERS	_IOWR('D', 92, struct pfioc_nv)
+#define	DIOCGETSYNCOOKIES	_IOWR('D', 93, struct pfioc_nv)
+#define	DIOCSETSYNCOOKIES	_IOWR('D', 94, struct pfioc_nv)
 
 struct pf_ifspeed_v0 {
 	char			ifname[IFNAMSIZ];
@@ -1651,6 +1663,48 @@ int		 pf_tag_packet(struct mbuf *, struct pf_pdesc *, int);
 int		 pf_addr_cmp(struct pf_addr *, struct pf_addr *,
 		    sa_family_t);
 void		 pf_qid2qname(u_int32_t, char *);
+
+u_int16_t	 pf_get_mss(struct mbuf *, int, u_int16_t, sa_family_t);
+u_int8_t	 pf_get_wscale(struct mbuf *, int, u_int16_t, sa_family_t);
+struct mbuf 	*pf_build_tcp(const struct pf_krule *, sa_family_t,
+		    const struct pf_addr *, const struct pf_addr *,
+		    u_int16_t, u_int16_t, u_int32_t, u_int32_t,
+		    u_int8_t, u_int16_t, u_int16_t, u_int8_t, int,
+		    u_int16_t);
+void		 pf_send_tcp(const struct pf_krule *, sa_family_t,
+			    const struct pf_addr *, const struct pf_addr *,
+			    u_int16_t, u_int16_t, u_int32_t, u_int32_t,
+			    u_int8_t, u_int16_t, u_int16_t, u_int8_t, int,
+			    u_int16_t);
+/*struct mbuf *		 pf_build_tcp(const struct pf_rule *, sa_family_t,
+			    const struct pf_addr *, const struct pf_addr *,
+			    u_int16_t, u_int16_t, u_int32_t, u_int32_t,
+			    u_int8_t, u_int16_t, u_int16_t, u_int8_t, int,
+			    u_int16_t, u_int, u_int);
+void			 pf_send_tcp(const struct pf_rule *, sa_family_t,
+			    const struct pf_addr *, const struct pf_addr *,
+			    u_int16_t, u_int16_t, u_int32_t, u_int32_t,
+			    u_int8_t, u_int16_t, u_int16_t, u_int8_t, int,
+			    u_int16_t, u_int);*/
+
+/* Only for adaptive mode
+ * struct pf_syncflwats {
+	uint32_t	hiwat;
+	uint32_t	lowat;
+};*/
+
+void			 pf_syncookies_init(void);
+int			 pf_syncookies_setmode(u_int8_t);
+/* Only for adaptive mode
+ * int			 pf_syncookies_setwats(u_int32_t, u_int32_t);
+ * int			 pf_syncookies_getwats(struct pf_synflwats *);
+*/
+int			 pf_synflood_check(struct pf_pdesc *);
+void			 pf_syncookie_send(struct mbuf *m, int off,
+			    struct pf_pdesc *);
+u_int8_t		 pf_syncookie_validate(struct pf_pdesc *);
+struct mbuf *		 pf_syncookie_recreate_syn(uint8_t, int,
+			    struct pf_pdesc *);
 
 VNET_DECLARE(struct pf_kstatus, pf_status);
 #define	V_pf_status	VNET(pf_status)

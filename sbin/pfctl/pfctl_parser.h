@@ -100,6 +100,7 @@ struct pfctl {
 	u_int32_t	 hostid;
 	char		*ifname;
 	bool		 keep_counters;
+	u_int8_t	 syncookies;
 
 	u_int8_t	 timeout_set[PFTM_MAX];
 	u_int8_t	 limit_set[PF_LIMIT_MAX];
@@ -263,6 +264,7 @@ void	pfctl_move_pool(struct pfctl_pool *, struct pfctl_pool *);
 void	pfctl_clear_pool(struct pfctl_pool *);
 
 int	pfctl_set_timeout(struct pfctl *, const char *, int, int);
+int	pfctl_set_syncookies(struct pfctl *, u_int8_t);
 int	pfctl_set_optimization(struct pfctl *, const char *);
 int	pfctl_set_limit(struct pfctl *, const char *, unsigned int);
 int	pfctl_set_logif(struct pfctl *, char *);

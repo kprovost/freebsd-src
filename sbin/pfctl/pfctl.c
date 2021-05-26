@@ -93,6 +93,7 @@ int	 pfctl_load_timeout(struct pfctl *, unsigned int, unsigned int);
 int	 pfctl_load_debug(struct pfctl *, unsigned int);
 int	 pfctl_load_logif(struct pfctl *, char *);
 int	 pfctl_load_hostid(struct pfctl *, u_int32_t);
+int	 pfctl_load_syncookies(struct pfctl *, u_int8_t);
 int	 pfctl_get_pool(int, struct pfctl_pool *, u_int32_t, u_int32_t, int,
 	    char *);
 void	 pfctl_print_rule_counters(struct pfctl_rule *, int);
@@ -1818,6 +1819,10 @@ pfctl_load_options(struct pfctl *pf)
 	if (pfctl_set_keepcounters(pf->dev, pf->keep_counters))
 		error = 1;
 
+	/* load syncookies settings */
+	if (pfctl_load_syncookies(pf, pf->syncookies))
+		error = 1;
+
 	return (error);
 }
 
@@ -1903,6 +1908,27 @@ pfctl_load_timeout(struct pfctl *pf, unsigned int timeout, unsigned int seconds)
 		warnx("DIOCSETTIMEOUT");
 		return (1);
 	}
+	return (0);
+}
+
+int
+pfctl_set_syncookies(struct pfctl *pf, u_int8_t val)
+{
+	if (pf->opts & PF_OPT_VERBOSE) {
+		if (val == PF_SYNCOOKIES_NEVER)
+			printf("set syncookies never\n");
+		else if (val == PF_SYNCOOKIES_ALWAYS)
+			printf("set syncookies always\n");
+		/*else if (val == PF_SYNCOOKIES_ADAPTIVE)
+			printf("set syncookies adaptive\n");*/
+		else {  /* cannot happen */
+			warnx("king bula ate all syncookies");
+			return (1);
+		}
+	}
+
+	pf->syncookies = val;
+
 	return (0);
 }
 
@@ -1999,6 +2025,16 @@ pfctl_load_hostid(struct pfctl *pf, u_int32_t hostid)
 {
 	if (ioctl(dev, DIOCSETHOSTID, &hostid)) {
 		warnx("DIOCSETHOSTID");
+		return (1);
+	}
+	return (0);
+}
+
+int
+pfctl_load_syncookies(struct pfctl *pf, u_int8_t val)
+{
+	if (ioctl(dev, DIOCSETSYNCOOKIES, &val)) {
+		warnx("DIOCSETSYNCOOKIES");
 		return (1);
 	}
 	return (0);

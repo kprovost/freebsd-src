@@ -101,7 +101,7 @@ union pf_syncookie {
 #define	PF_SYNCOOKIE_SECRET_SIZE	SIPHASH_KEY_LENGTH
 #define	PF_SYNCOOKIE_SECRET_LIFETIME	15 /* seconds */
 
-static struct {
+struct pf_syncookie_status {
 	struct callout	keytimeout;
 	uint8_t		oddeven;	/* XXX TODO, locking? Access pattern? */
 	uint8_t		key[2][SIPHASH_KEY_LENGTH];
@@ -109,7 +109,9 @@ static struct {
 	uint32_t	hiwat;	/* absolute; # of states */
 	uint32_t	lowat;
 #endif
-} pf_syncookie_status;
+};
+VNET_DEFINE_STATIC(struct pf_syncookie_status, pf_syncookie_status);
+#define V_pf_syncookie_status	VNET(pf_syncookie_status)
 
 static int	pf_syncookies_setmode(u_int8_t);
 void		pf_syncookie_rotate(void *);
@@ -122,10 +124,10 @@ uint32_t	pf_syncookie_generate(struct mbuf *m, int off, struct pf_pdesc *,
 void
 pf_syncookies_init(void)
 {
-	callout_init(&pf_syncookie_status.keytimeout, 1);
+	callout_init(&V_pf_syncookie_status.keytimeout, 1);
 #if 0
-	pf_syncookie_status.hiwat = PFSTATE_HIWAT * PF_SYNCOOKIES_HIWATPCT/100;
-	pf_syncookie_status.lowat = PFSTATE_HIWAT * PF_SYNCOOKIES_LOWATPCT/100;
+	V_pf_syncookie_status.hiwat = PFSTATE_HIWAT * PF_SYNCOOKIES_HIWATPCT/100;
+	V_pf_syncookie_status.lowat = PFSTATE_HIWAT * PF_SYNCOOKIES_LOWATPCT/100;
 #endif
 	pf_syncookies_setmode(PF_SYNCOOKIES_NEVER);
 }
@@ -237,16 +239,16 @@ pf_syncookies_setwats(u_int32_t hiwat, u_int32_t lowat)
 	if (lowat > hiwat)
 		return (EINVAL);
 
-	pf_syncookie_status.hiwat = hiwat;
-	pf_syncookie_status.lowat = lowat;
+	V_pf_syncookie_status.hiwat = hiwat;
+	V_pf_syncookie_status.lowat = lowat;
 	return (0);
 }
 
 int
 pf_syncookies_getwats(struct pfioc_synflwats *wats)
 {
-	wats->hiwat = pf_syncookie_status.hiwat;
-	wats->lowat = pf_syncookie_status.lowat;
+	wats->hiwat = V_pf_syncookie_status.hiwat;
+	wats->lowat = V_pf_syncookie_status.lowat;
 	return (0);
 }
 #endif
@@ -265,7 +267,7 @@ pf_synflood_check(struct pf_pdesc *pd)
 		return (V_pf_status.syncookies_mode);
 /*
 	if (!V_pf_status.syncookies_active &&
-	    V_pf_status.states_halfopen > pf_syncookie_status.hiwat) {
+	    V_pf_status.states_halfopen > V_pf_syncookie_status.hiwat) {
 		pf_syncookie_newkey();
 		V_pf_status.syncookies_active = true;
 		DPFPRINTF(PF_DEBUG_URGENT,
@@ -287,7 +289,7 @@ pf_syncookie_send(struct mbuf *m, int off, struct pf_pdesc *pd)
 	pf_send_tcp(NULL, pd->af, pd->dst, pd->src, *pd->dport, *pd->sport,
 	    iss, ntohl(pd->hdr.tcp->th_seq) + 1, TH_SYN|TH_ACK, 0, mss,
 	    0, 1, 0);
-	//V_pf_status.syncookies_inflight[pf_syncookie_status.oddeven]++;
+	//V_pf_status.syncookies_inflight[V_pf_syncookie_status.oddeven]++;
 	//V_pf_status.lcounters[LCNT_SYNCOOKIES_SENT]++;
 }
 
@@ -328,7 +330,7 @@ pf_syncookie_rotate(void *arg)
 	if (V_pf_status.syncookies_active /*&&
 	    ((V_pf_status.syncookies_mode == PF_SYNCOOKIES_ADAPTIVE &&
 	    V_pf_status.states_halfopen + V_pf_status.syncookies_inflight[0] +
-	    V_pf_status.syncookies_inflight[1] < pf_syncookie_status.lowat) ||
+	    V_pf_status.syncookies_inflight[1] < V_pf_syncookie_status.lowat) ||
 	    V_pf_status.syncookies_mode == PF_SYNCOOKIES_NEVER)*/) {
 		V_pf_status.syncookies_active = false;
 		DPFPRINTF(PF_DEBUG_MISC, ("syncookies disabled"));
@@ -338,9 +340,9 @@ pf_syncookie_rotate(void *arg)
 	if (!V_pf_status.syncookies_active &&
 	    V_pf_status.syncookies_inflight[0] == 0 &&
 	    V_pf_status.syncookies_inflight[1] == 0) {
-		memset(pf_syncookie_status.key[0], 0,
+		memset(V_pf_syncookie_status.key[0], 0,
 		    PF_SYNCOOKIE_SECRET_SIZE);
-		memset(pf_syncookie_status.key[1], 0,
+		memset(V_pf_syncookie_status.key[1], 0,
 		    PF_SYNCOOKIE_SECRET_SIZE);
 		CURVNET_RESTORE();
 		return;
@@ -350,16 +352,17 @@ pf_syncookie_rotate(void *arg)
 	pf_syncookie_newkey();
 
 	CURVNET_RESTORE();
+	printf("KP: %s() return\n", __func__);
 }
 
 void
 pf_syncookie_newkey(void)
 {
-	pf_syncookie_status.oddeven = (pf_syncookie_status.oddeven + 1) & 0x1;
-	V_pf_status.syncookies_inflight[pf_syncookie_status.oddeven] = 0;
-	arc4random_buf(pf_syncookie_status.key[pf_syncookie_status.oddeven],
+	V_pf_syncookie_status.oddeven = (V_pf_syncookie_status.oddeven + 1) & 0x1;
+	V_pf_status.syncookies_inflight[V_pf_syncookie_status.oddeven] = 0;
+	arc4random_buf(V_pf_syncookie_status.key[V_pf_syncookie_status.oddeven],
 	    PF_SYNCOOKIE_SECRET_SIZE);
-	callout_reset(&pf_syncookie_status.keytimeout,
+	callout_reset(&V_pf_syncookie_status.keytimeout,
 	    PF_SYNCOOKIE_SECRET_LIFETIME, pf_syncookie_rotate, curvnet);
 }
 
@@ -390,7 +393,7 @@ pf_syncookie_mac(struct pf_pdesc *pd, union pf_syncookie cookie, uint32_t seq)
 	MPASS(pd->proto == IPPROTO_TCP);
 
 	SipHash24_Init(&ctx);
-	SipHash_SetKey(&ctx, pf_syncookie_status.key[cookie.flags.oddeven]);
+	SipHash_SetKey(&ctx, V_pf_syncookie_status.key[cookie.flags.oddeven]);
 
 	switch (pd->af) {
 	case AF_INET:
@@ -438,7 +441,7 @@ pf_syncookie_generate(struct mbuf *m, int off, struct pf_pdesc *pd,
 	cookie.flags.wscale_idx = i;
 	cookie.flags.sack_ok = 0;	/* XXX */
 
-	cookie.flags.oddeven = pf_syncookie_status.oddeven;
+	cookie.flags.oddeven = V_pf_syncookie_status.oddeven;
 	hash = pf_syncookie_mac(pd, cookie, ntohl(pd->hdr.tcp->th_seq));
 
 	/*

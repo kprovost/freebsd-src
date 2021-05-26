@@ -322,7 +322,7 @@ pf_syncookie_validate(struct pf_pdesc *pd)
 void
 pf_syncookie_rotate(void *arg)
 {
-	MPASS(arg == NULL);
+	CURVNET_SET((struct vnet *)arg);
 
 	/* do we want to disable syncookies? */
 	if (V_pf_status.syncookies_active /*&&
@@ -342,11 +342,14 @@ pf_syncookie_rotate(void *arg)
 		    PF_SYNCOOKIE_SECRET_SIZE);
 		memset(pf_syncookie_status.key[1], 0,
 		    PF_SYNCOOKIE_SECRET_SIZE);
+		CURVNET_RESTORE();
 		return;
 	}
 
 	/* new key, including timeout */
 	pf_syncookie_newkey();
+
+	CURVNET_RESTORE();
 }
 
 void
@@ -357,7 +360,7 @@ pf_syncookie_newkey(void)
 	arc4random_buf(pf_syncookie_status.key[pf_syncookie_status.oddeven],
 	    PF_SYNCOOKIE_SECRET_SIZE);
 	callout_reset(&pf_syncookie_status.keytimeout,
-	    PF_SYNCOOKIE_SECRET_LIFETIME, pf_syncookie_rotate, NULL);
+	    PF_SYNCOOKIE_SECRET_LIFETIME, pf_syncookie_rotate, curvnet);
 }
 
 /*

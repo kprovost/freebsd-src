@@ -726,10 +726,7 @@ option		: SET OPTIMIZATION STRING		{
 			pf->keep_counters = true;
 		}
 		| SET SYNCOOKIES syncookie_val {
-			if (pfctl_set_syncookies(pf, $3)) {
-				yyerror("error setting syncookies");
-				YYERROR;
-			}
+			pf->syncookies = $3;
 		}
 		;
 

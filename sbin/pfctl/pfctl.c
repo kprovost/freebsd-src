@@ -1265,15 +1265,20 @@ pfctl_show_states(int dev, const char *iface, int opts)
 int
 pfctl_show_status(int dev, int opts)
 {
-	struct pf_status status;
+	struct pf_status	status;
+	struct pfctl_syncookies	cookies;
 
 	if (ioctl(dev, DIOCGETSTATUS, &status)) {
 		warn("DIOCGETSTATUS");
 		return (-1);
 	}
+	if (pfctl_get_syncookies(dev, &cookies)) {
+		warn("DIOCGETSYNCOOKIES");
+		return (-1);
+	}
 	if (opts & PF_OPT_SHOWALL)
 		pfctl_print_title("INFO:");
-	print_status(&status, opts);
+	print_status(&status, &cookies, opts);
 	return (0);
 }
 

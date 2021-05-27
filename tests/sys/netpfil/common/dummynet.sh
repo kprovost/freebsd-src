@@ -53,7 +53,9 @@ pipe_body()
 
 	firewall_config alcatraz ${fw} \
 		"ipfw"	\
-			"ipfw add 1000 pipe 1 ip from any to any"
+			"ipfw add 1000 pipe 1 ip from any to any" \
+		"pf"	\
+			"pass in dnpipe 1"
 
 	# single ping succeeds just fine
 	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
@@ -72,4 +74,5 @@ pipe_cleanup()
 
 setup_tests		\
 	pipe		\
-		ipfw
+		ipfw	\
+		pf

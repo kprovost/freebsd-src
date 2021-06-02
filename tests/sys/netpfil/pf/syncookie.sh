@@ -69,7 +69,53 @@ basic_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "forward" "cleanup"
+forward_head()
+{
+	atf_set descr 'Syncookies for forwarded hosts'
+	atf_set require.user root
+}
+
+forward_body()
+{
+	pft_init
+
+	epair_in=$(vnet_mkepair)
+	epair_out=$(vnet_mkepair)
+
+	vnet_mkjail fwd ${epair_in}b ${epair_out}a
+	vnet_mkjail srv ${epair_out}b
+
+	jexec fwd ifconfig ${epair_in}b 192.0.2.1/24 up
+	jexec fwd ifconfig ${epair_out}a 198.51.100.1/24 up
+	jexec fwd sysctl net.inet.ip.forwarding=1
+
+	jexec srv ifconfig ${epair_out}b 198.51.100.2/24 up
+	jexec srv route add default 198.51.100.1
+	jexec srv /usr/sbin/inetd -p inetd-alcatraz.pid \
+	    $(atf_get_srcdir)/echo_inetd.conf
+
+	ifconfig ${epair_in}a 192.0.2.2/24 up
+	route add -net 198.51.100.0/24 192.0.2.1
+
+	jexec fwd pfctl -e
+	pft_set_rules fwd \
+		"set syncookies always" \
+		"pass in" \
+		"pass out"
+
+	# Sanity check
+	atf_check -s exit:0 -o ignore ping -c 1 198.51.100.2
+
+	reply=$(echo foo | nc -N 198.51.100.2  7)
+	if [ "${reply}" != "foo" ];
+	then
+		atf_fail "Failed to connect to syncookie protected echo daemon"
+	fi
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "basic"
+	atf_add_test_case "forward"
 }

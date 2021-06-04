@@ -5941,6 +5941,54 @@ pf_check_proto_cksum(struct mbuf *m, int off, int len, u_int8_t p, sa_family_t a
 	return (0);
 }
 
+static void
+pf_pdesc_to_dnflow(int dir, const struct pf_pdesc *pd, const struct pf_krule *r,
+    struct ip_fw_args *dnflow)
+{
+
+	memset(dnflow, 0, sizeof(*dnflow));
+
+
+	if (pd->dport != NULL)
+		dnflow->f_id.dst_port = ntohs(*pd->dport);
+	if (pd->sport != NULL)
+		dnflow->f_id.src_port = ntohs(*pd->sport);
+
+	if (dir == PF_IN)
+		dnflow->flags |= IPFW_ARGS_IN;
+	else
+		dnflow->flags |= IPFW_ARGS_OUT;
+
+	/* XXX TODO: If we set-tos to lowdelay this won't work. */
+	if (pd->tos & IPTOS_LOWDELAY)
+		dnflow->rule.info = r->pdnpipe;
+	else
+		dnflow->rule.info = r->dnpipe;
+
+	dnflow->rule.info |= IPFW_IS_DUMMYNET;
+	if (r->free_flags & PFRULE_DN_IS_PIPE)
+		dnflow->rule.info |= IPFW_IS_PIPE;
+
+	dnflow->f_id.proto = pd->proto;
+	dnflow->f_id.extra = dnflow->rule.info;
+	switch (pd->af) {
+	case AF_INET:
+		dnflow->f_id.addr_type = 4; /* IPv4 type */
+		dnflow->f_id.src_ip = ntohl(pd->src->v4.s_addr);
+		dnflow->f_id.dst_ip = ntohl(pd->dst->v4.s_addr);
+		break;
+	case AF_INET6:
+		dnflow->flags |= IPFW_ARGS_IP6;
+		dnflow->f_id.addr_type = 6; /* IPv6 type */
+		dnflow->f_id.src_ip6 = pd->src->v6;
+		dnflow->f_id.dst_ip6 = pd->dst->v6;
+		break;
+	default:
+		panic("Invalid AF");
+		break;
+	}
+}
+
 #ifdef INET
 int
 pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *inp)
@@ -6188,8 +6236,6 @@ done:
 	    && !PACKET_LOOPED(&pd)) {
 		struct ip_fw_args dnflow;
 
-		memset(&dnflow, 0, sizeof(dnflow));
-
 		if (pd.pf_mtag == NULL &&
 		    ((pd.pf_mtag = pf_get_mtag(m)) == NULL)) {
 			action = PF_DROP;
@@ -6199,30 +6245,7 @@ done:
 			return (action);
 		}
 
-		if (pd.dport != NULL)
-			dnflow.f_id.dst_port = ntohs(*pd.dport);
-		if (pd.sport != NULL)
-			dnflow.f_id.src_port = ntohs(*pd.sport);
-
-		if (dir == PF_IN)
-			dnflow.flags |= IPFW_ARGS_IN;
-		else
-			dnflow.flags |= IPFW_ARGS_OUT;
-
-		if (pqid || (pd.tos & IPTOS_LOWDELAY))
-			dnflow.rule.info = r->pdnpipe;
-		else
-			dnflow.rule.info = r->dnpipe;
-
-		dnflow.rule.info |= IPFW_IS_DUMMYNET;
-		if (r->free_flags & PFRULE_DN_IS_PIPE)
-			dnflow.rule.info |= IPFW_IS_PIPE;
-
-		dnflow.f_id.addr_type = 4; /* IPv4 type */
-		dnflow.f_id.proto = pd.proto;
-		dnflow.f_id.src_ip = ntohl(pd.src->v4.s_addr);
-		dnflow.f_id.dst_ip = ntohl(pd.dst->v4.s_addr);
-		dnflow.f_id.extra = dnflow.rule.info;
+		pf_pdesc_to_dnflow(dir, &pd, r, &dnflow);
 
 		ip_dn_io_ptr(m0, &dnflow);
 

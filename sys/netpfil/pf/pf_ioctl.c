@@ -5387,7 +5387,7 @@ pf_load(void)
 {
 	int error;
 
-	rm_init(&pf_rules_lock, "pf rulesets");
+	rm_init_flags(&pf_rules_lock, "pf rulesets", RM_RECURSE);
 	sx_init(&pf_ioctl_lock, "pf ioctl");
 	sx_init(&pf_end_lock, "pf end thread");
 

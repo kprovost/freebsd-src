@@ -264,7 +264,7 @@ pf_synflood_check(struct pf_pdesc *pd)
 	//MPASS(V_pf_status.syncookies_mode != PF_SYNCOOKIES_ADAPTIVE);
 
 	//if (V_pf_status.syncookies_mode != PF_SYNCOOKIES_ADAPTIVE)
-		return (V_pf_status.syncookies_mode);
+	return (V_pf_status.syncookies_mode);
 /*
 	if (!V_pf_status.syncookies_active &&
 	    V_pf_status.states_halfopen > V_pf_syncookie_status.hiwat) {
@@ -284,10 +284,10 @@ pf_syncookie_send(struct mbuf *m, int off, struct pf_pdesc *pd)
 	uint16_t	mss;
 	uint32_t	iss;
 
-	mss = max(V_tcp_mssdflt, pf_get_mss(m, off, pd->hdr.tcp->th_off, pd->af));
+	mss = max(V_tcp_mssdflt, pf_get_mss(m, off, pd->hdr.tcp.th_off, pd->af));
 	iss = pf_syncookie_generate(m, off, pd, mss);
 	pf_send_tcp(NULL, pd->af, pd->dst, pd->src, *pd->dport, *pd->sport,
-	    iss, ntohl(pd->hdr.tcp->th_seq) + 1, TH_SYN|TH_ACK, 0, mss,
+	    iss, ntohl(pd->hdr.tcp.th_seq) + 1, TH_SYN|TH_ACK, 0, mss,
 	    0, 1, 0);
 	//V_pf_status.syncookies_inflight[V_pf_syncookie_status.oddeven]++;
 	//V_pf_status.lcounters[LCNT_SYNCOOKIES_SENT]++;
@@ -301,20 +301,20 @@ pf_syncookie_validate(struct pf_pdesc *pd)
 
 	MPASS(pd->proto == IPPROTO_TCP);
 
-	seq = ntohl(pd->hdr.tcp->th_seq) - 1;
-	ack = ntohl(pd->hdr.tcp->th_ack) - 1;
+	seq = ntohl(pd->hdr.tcp.th_seq) - 1;
+	ack = ntohl(pd->hdr.tcp.th_ack) - 1;
 	cookie.cookie = (ack & 0xff) ^ (ack >> 24);
 
 	/* we don't know oddeven before setting the cookie (union) */
-	if (V_pf_status.syncookies_inflight[cookie.flags.oddeven] == 0)
-		return (0);
+	/*if (V_pf_status.syncookies_inflight[cookie.flags.oddeven] == 0) {
+		return (0);*/
 
 	hash = pf_syncookie_mac(pd, cookie, seq);
 	if ((ack & ~0xff) != (hash & ~0xff))
 		return (0);
 
 	V_pf_status.syncookies_inflight[cookie.flags.oddeven]--;
-	V_pf_status.lcounters[LCNT_SYNCOOKIES_VALID]++;
+	counter_u64_add(V_pf_status.lcounters[LCNT_SYNCOOKIES_VALID], 1);
 	return (1);
 }
 
@@ -337,9 +337,9 @@ pf_syncookie_rotate(void *arg)
 	}
 
 	/* nothing in flight any more? delete keys and return */
-	if (!V_pf_status.syncookies_active &&
+	if (!V_pf_status.syncookies_active /*&&
 	    V_pf_status.syncookies_inflight[0] == 0 &&
-	    V_pf_status.syncookies_inflight[1] == 0) {
+	    V_pf_status.syncookies_inflight[1] == 0*/) {
 		memset(V_pf_syncookie_status.key[0], 0,
 		    PF_SYNCOOKIE_SECRET_SIZE);
 		memset(V_pf_syncookie_status.key[1], 0,
@@ -434,7 +434,7 @@ pf_syncookie_generate(struct mbuf *m, int off, struct pf_pdesc *pd,
 	cookie.flags.mss_idx = i;
 
 	/* map WSCALE */
-	wscale = pf_get_wscale(m, off, pd->hdr.tcp->th_off, pd->af);
+	wscale = pf_get_wscale(m, off, pd->hdr.tcp.th_off, pd->af);
 	for (i = nitems(pf_syncookie_wstab) - 1;
 	    pf_syncookie_wstab[i] > wscale && i > 0; i--)
 		/* nada */;
@@ -442,7 +442,7 @@ pf_syncookie_generate(struct mbuf *m, int off, struct pf_pdesc *pd,
 	cookie.flags.sack_ok = 0;	/* XXX */
 
 	cookie.flags.oddeven = V_pf_syncookie_status.oddeven;
-	hash = pf_syncookie_mac(pd, cookie, ntohl(pd->hdr.tcp->th_seq));
+	hash = pf_syncookie_mac(pd, cookie, ntohl(pd->hdr.tcp.th_seq));
 
 	/*
 	 * Put the flags into the hash and XOR them to get better ISS number
@@ -464,8 +464,8 @@ pf_syncookie_recreate_syn(uint8_t ttl, int off, struct pf_pdesc *pd)
 	uint32_t		 ack, seq;
 	union pf_syncookie	 cookie;
 
-	seq = ntohl(pd->hdr.tcp->th_seq) - 1;
-	ack = ntohl(pd->hdr.tcp->th_ack) - 1;
+	seq = ntohl(pd->hdr.tcp.th_seq) - 1;
+	ack = ntohl(pd->hdr.tcp.th_ack) - 1;
 	cookie.cookie = (ack & 0xff) ^ (ack >> 24);
 
 	if (cookie.flags.mss_idx >= nitems(pf_syncookie_msstab) ||

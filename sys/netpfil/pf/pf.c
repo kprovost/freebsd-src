@@ -6101,9 +6101,14 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 		}
 		pd.p_len = pd.tot_len - off - (pd.hdr.tcp.th_off << 2);
 
+		/* XXX Should we investigate OpenBSD's code to build the pd? */
+		pd.sport = &pd.hdr.tcp.th_sport;
+		pd.dport = &pd.hdr.tcp.th_dport;
+
 		/* Respond to SYN with a syncookie. */
+		/* XXX Do we want to check rules first?? */
 		if ((pd.hdr.tcp.th_flags & (TH_SYN|TH_ACK|TH_RST)) == TH_SYN &&
-		    pf_synflood_check(&pd)) {
+		    pd.dir == PF_IN && pf_synflood_check(&pd)) {
 			pf_syncookie_send(m, off, &pd);
 			action = PF_DROP;
 			break;
@@ -6124,8 +6129,8 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 			log = s->log;
 		} else if (s == NULL) {
 			/* Validate remote SYN|ACK, re-create original SYN if valid */
-			if ((th.th_flags & (TH_SYN|TH_ACK|TH_RST)) ==
-			    (TH_SYN|TH_ACK) && pf_syncookie_validate(&pd)) {
+			if ((pd.hdr.tcp.th_flags & (TH_SYN|TH_ACK|TH_RST)) ==
+			    TH_ACK && pf_syncookie_validate(&pd) && pd.dir == PF_IN) {
 				struct mbuf *msyn;
 
 				msyn = pf_syncookie_recreate_syn(h->ip_ttl, off, &pd);
@@ -6136,12 +6141,28 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 
 				action = pf_test(dir, pflags, ifp, &msyn, inp);
 				m_freem(msyn);
-				/* XXX Do we need to do anything else? */
 
+				if (action == PF_PASS) {
+					action = pf_test_state_tcp(&s, dir, kif, m, off, h, &pd, &reason);
+					if (action != PF_PASS || s == NULL) {
+						action = PF_DROP;
+						break;
+					}
+
+					s->src.seqhi = ntohl(pd.hdr.tcp.th_ack) - 1;
+					s->src.seqlo = ntohl(pd.hdr.tcp.th_seq) - 1;
+					s->src.state = PF_TCPS_PROXY_DST;
+
+					action = pf_synproxy(&pd, &s, &reason);
+					if (action != PF_PASS)
+						break;
+				}
+				break;
 			}
-			/* KP XXX if (SYN|ACK) pf_syncookie_validate() */
-			action = pf_test_rule(&r, &s, dir, kif, m, off, &pd,
-			    &a, &ruleset, inp);
+			else {
+				action = pf_test_rule(&r, &s, dir, kif, m, off,
+				    &pd, &a, &ruleset, inp);
+			}
 		}
 		break;
 	}

@@ -72,7 +72,83 @@ pipe_cleanup()
 	firewall_cleanup $1
 }
 
+queue_head()
+{
+	atf_set descr 'Basic queue test'
+	atf_set require.user root
+}
+
+queue_body()
+{
+	fw=$1
+	firewall_init $fw
+	dummynet_init $fw
+
+	epair=$(vnet_mkepair)
+	vnet_mkjail alcatraz ${epair}b
+
+	ifconfig ${epair}a 192.0.2.1/24 up
+	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
+	jexec alcatraz /usr/sbin/inetd -p inetd-alcatraz.pid \
+	    $(atf_get_srcdir)/../pf/echo_inetd.conf
+
+	# Sanity check
+	atf_check -s exit:0 -o ignore ping -i .1 -c 3 -s 1200 192.0.2.2
+	reply=$(echo "foo" | nc -N 192.0.2.2 7)
+	if [ "$reply" != "foo" ];
+	then
+		atf_fail "Echo sanity check failed"
+	fi
+
+	jexec alcatraz dnctl pipe 1 config bw 100Byte/s
+	jexec alcatraz dnctl sched 1 config pipe 1 type wf2q+
+	jexec alcatraz dnctl queue 1 config sched 1 weight 99
+	jexec alcatraz dnctl queue 2 config sched 1 weight 1
+
+	firewall_config alcatraz ${fw} \
+		"ipfw"	\
+			"ipfw add 1000 queue 2 icmp from any to any" \
+			"ipfw add 1001 queue 1 tcp from any to any"
+
+	# Single ping succeeds
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
+
+	# Saturate the link
+	ping -i .01 -s 1200 192.0.2.2 &
+
+	# We should now be hitting the limits and get this packet dropped.
+	atf_check -s exit:2 -o ignore ping -c 1 -W 1 -s 1200 192.0.2.2
+
+	# TCP should still just pass
+	reply=$(echo "foo" | nc -N 192.0.2.2 7)
+	if [ "$reply" != "foo" ];
+	then
+		atf_fail "Failed to prioritise TCP traffic"
+	fi
+
+	# This will fail if we don't differentiate the traffic
+	firewall_config alcatraz ${fw} \
+		"ipfw"	\
+			"ipfw add 1000 queue 1 ip from any to any"
+
+	reply=$(echo "foo" | nc -N 192.0.2.2 7)
+	if [ "$reply" == "foo" ];
+	then
+		atf_fail "TCP still made it through, even when not prioritised"
+	fi
+
+}
+
+queue_cleanup()
+{
+	rm -f inetd-alcatraz.pid
+	firewall_cleanup $1
+}
+
 setup_tests		\
 	pipe		\
 		ipfw	\
-		pf
+		pf	\
+	queue		\
+		ipfw
+

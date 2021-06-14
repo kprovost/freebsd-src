@@ -108,7 +108,10 @@ queue_body()
 	firewall_config alcatraz ${fw} \
 		"ipfw"	\
 			"ipfw add 1000 queue 2 icmp from any to any" \
-			"ipfw add 1001 queue 1 tcp from any to any"
+			"ipfw add 1001 queue 1 tcp from any to any" \
+		"pf" \
+			"pass proto tcp dnqueue 1"	\
+			"pass proto icmp dnqueue 2"
 
 	# Single ping succeeds
 	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
@@ -129,7 +132,9 @@ queue_body()
 	# This will fail if we don't differentiate the traffic
 	firewall_config alcatraz ${fw} \
 		"ipfw"	\
-			"ipfw add 1000 queue 1 ip from any to any"
+			"ipfw add 1000 queue 1 ip from any to any"	\
+		"pf"	\
+			"pass dnqueue 1"
 
 	reply=$(echo "foo" | nc -N 192.0.2.2 7)
 	if [ "$reply" == "foo" ];
@@ -150,5 +155,6 @@ setup_tests		\
 		ipfw	\
 		pf	\
 	queue		\
-		ipfw
+		ipfw	\
+		pf
 

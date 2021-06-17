@@ -6417,6 +6417,7 @@ pf_test6(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb 
 	u_short			 action, reason = 0, log = 0;
 	struct mbuf		*m = *m0, *n = NULL;
 	struct m_tag		*mtag;
+	struct m_tag		*ipfwtag;
 	struct ip6_hdr		*h = NULL;
 	struct pf_krule		*a = NULL, *r = &V_pf_default_rule, *tr, *nr;
 	struct pf_state		*s = NULL;
@@ -6451,7 +6452,19 @@ pf_test6(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb 
 	PF_RULES_RLOCK();
 
 	/* We do IP header normalization and packet reassembly here */
-	if (pf_normalize_ip6(m0, dir, kif, &reason, &pd) != PF_PASS) {
+	if (ip_dn_io_ptr != NULL &&
+	    ((ipfwtag = m_tag_locate(m, MTAG_IPFW_RULE, 0, NULL)) != NULL)) {
+		struct ipfw_rule_ref *rr = (struct ipfw_rule_ref *)(ipfwtag+1);
+		if (rr->info & IPFW_IS_DUMMYNET) {
+			if (pd.pf_mtag == NULL &&
+			    ((pd.pf_mtag = pf_get_mtag(m)) == NULL)) {
+				action = PF_DROP;
+				goto done;
+			}
+			pd.pf_mtag->flags |= PF_PACKET_LOOPED;
+			m_tag_delete(m, ipfwtag);
+		}
+	} else if (pf_normalize_ip6(m0, dir, kif, &reason, &pd) != PF_PASS) {
 		action = PF_DROP;
 		goto done;
 	}
@@ -6560,6 +6573,8 @@ pf_test6(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb 
 			goto done;
 		}
 		pd.p_len = pd.tot_len - off - (pd.hdr.tcp.th_off << 2);
+		pd.sport = &pd.hdr.tcp.th_sport;
+		pd.dport = &pd.hdr.tcp.th_dport;
 		action = pf_normalize_tcp(dir, kif, m, 0, off, h, &pd);
 		if (action == PF_DROP)
 			goto done;
@@ -6583,6 +6598,8 @@ pf_test6(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb 
 			log = action != PF_PASS;
 			goto done;
 		}
+		pd.sport = &pd.hdr.udp.uh_sport;
+		pd.dport = &pd.hdr.udp.uh_dport;
 		if (pd.hdr.udp.uh_dport == 0 ||
 		    ntohs(pd.hdr.udp.uh_ulen) > m->m_pkthdr.len - off ||
 		    ntohs(pd.hdr.udp.uh_ulen) < sizeof(struct udphdr)) {
@@ -6698,6 +6715,34 @@ done:
 		}
 	}
 #endif /* ALTQ */
+
+	if (r->dnpipe && ip_dn_io_ptr != NULL
+	    && !PACKET_LOOPED(&pd)) {
+		struct ip_fw_args dnflow;
+
+		if (pd.pf_mtag == NULL &&
+		    ((pd.pf_mtag = pf_get_mtag(m)) == NULL)) {
+			action = PF_DROP;
+			REASON_SET(&reason, PFRES_MEMORY);
+			if (s)
+				PF_STATE_UNLOCK(s);
+			return (action);
+		}
+
+		pf_pdesc_to_dnflow(dir, &pd, r, &dnflow);
+
+		ip_dn_io_ptr(m0, &dnflow);
+
+		if (*m0 == NULL) {
+			if (s)
+				PF_STATE_UNLOCK(s);
+			return (action);
+		} else {
+			/* This is dummynet fast io processing */
+			m_tag_delete(*m0, m_tag_first(*m0));
+			pd.pf_mtag->flags &= ~PF_PACKET_LOOPED;
+		}
+	}
 
 	if (dir == PF_IN && action == PF_PASS && (pd.proto == IPPROTO_TCP ||
 	    pd.proto == IPPROTO_UDP) && s != NULL && s->nat_rule.ptr != NULL &&

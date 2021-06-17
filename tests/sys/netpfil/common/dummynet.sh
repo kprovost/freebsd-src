@@ -194,6 +194,90 @@ queue_cleanup()
 	firewall_cleanup $1
 }
 
+queue_v6_head()
+{
+	atf_set descr 'Basic queue test'
+	atf_set require.user root
+}
+
+queue_v6_body()
+{
+	fw=$1
+	firewall_init $fw
+	dummynet_init $fw
+
+	epair=$(vnet_mkepair)
+	vnet_mkjail alcatraz ${epair}b
+
+	ifconfig ${epair}a inet6 2001:db8:42::1/64 no_dad up
+	jexec alcatraz ifconfig ${epair}b inet6 2001:db8:42::2 no_dad up
+	jexec alcatraz /usr/sbin/inetd -p inetd-alcatraz.pid \
+	    $(atf_get_srcdir)/../pf/echo_inetd.conf
+
+	# Sanity check
+	atf_check -s exit:0 -o ignore ping6 -i .1 -c 3 -s 1200 2001:db8:42::2
+	reply=$(echo "foo" | nc -N 2001:db8:42::2 7)
+	if [ "$reply" != "foo" ];
+	then
+		atf_fail "Echo sanity check failed"
+	fi
+
+	jexec alcatraz dnctl pipe 1 config bw 300Byte/s
+	jexec alcatraz dnctl sched 1 config pipe 1 type wf2q+
+	jexec alcatraz dnctl queue 1 config sched 1 weight 99
+	jexec alcatraz dnctl queue 2 config sched 1 weight 1
+
+	firewall_config alcatraz ${fw} \
+		"ipfw"	\
+			"ipfw add 1001 queue 1 tcp from any to any" \
+			"ipfw add 1000 queue 2 ipv6-icmp from any to any" \
+			"ipfw add 1002 allow ip6 from any to any" \
+		"pf" \
+			"pass proto tcp dnqueue 1"	\
+			"pass proto icmp6 dnqueue 2"
+
+	# Single ping succeeds
+	atf_check -s exit:0 -o ignore ping6 -c 1 2001:db8:42::2
+
+	# Unsaturated TCP succeeds
+	reply=$(echo "foo" | nc -w 5 -N 2001:db8:42::2 7)
+	if [ "$reply" != "foo" ];
+	then
+		atf_fail "Unsaturated echo failed"
+	fi
+
+	# Saturate the link
+	ping6 -i .01 -s 1200 2001:db8:42::2 &
+
+	# We should now be hitting the limits and get this packet dropped.
+	atf_check -s exit:2 -o ignore ping6 -c 1 -W 1 -s 1200 2001:db8:42::2
+
+	# TCP should still just pass
+	reply=$(echo "foo" | nc -w 5 -N 2001:db8:42::2 7)
+	if [ "$reply" != "foo" ];
+	then
+		atf_fail "Failed to prioritise TCP traffic"
+	fi
+
+	# This will fail if we don't differentiate the traffic
+	firewall_config alcatraz ${fw} \
+		"ipfw"	\
+			"ipfw add 1000 queue 1 ip6 from any to any"	\
+		"pf"	\
+			"pass dnqueue 1"
+
+	reply=$(echo "foo" | nc -w 5 -N 2001:db8:42::2 7)
+	if [ "$reply" == "foo" ];
+	then
+		atf_fail "TCP still made it through, even when not prioritised"
+	fi
+}
+
+queue_v6_cleanup()
+{
+	firewall_cleanup $1
+}
+
 setup_tests		\
 	pipe		\
 		ipfw	\
@@ -203,5 +287,7 @@ setup_tests		\
 		pf	\
 	queue		\
 		ipfw	\
+		pf	\
+	queue_v6	\
+		ipfw	\
 		pf
-

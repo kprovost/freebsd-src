@@ -1328,6 +1328,7 @@ struct pf_pdesc {
 #define PFDESC_SCTP_DATA	0x0010
 #define PFDESC_SCTP_OTHER	0x0020
 	u_int16_t	 sctp_flags;
+	u_int32_t	 sctp_initiate_tag;
 };
 #endif
 

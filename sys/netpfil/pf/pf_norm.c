@@ -55,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/tcp.h>
 #include <netinet/tcp_fsm.h>
 #include <netinet/tcp_seq.h>
+#include <netinet/sctp_header.h>
 
 #ifdef INET6
 #include <netinet/ip6.h>
@@ -1989,19 +1990,30 @@ pf_scan_sctp(struct mbuf *m, int ipoff, int off, struct pf_pdesc *pd)
 {
 	struct sctp_chunkhdr ch = { };
 	int chunk_off = sizeof(struct sctphdr);
+	int chunk_start;
 
 	while (off + chunk_off < pd->tot_len) {
 		if (!pf_pull_hdr(m, off + chunk_off, &ch, sizeof(ch), NULL,
 		    NULL, pd->af))
 			return (PF_DROP);
 
+		chunk_start = chunk_off;
 		chunk_off += roundup(ntohs(ch.chunk_length), 4);
 
 		switch (ch.chunk_type) {
 		case SCTP_INITIATION:
-		case SCTP_INITIATION_ACK:
+		case SCTP_INITIATION_ACK: {
+			struct sctp_init_chunk init;
+
+			if (!pf_pull_hdr(m, off + chunk_start, &init,
+			    sizeof(init), NULL, NULL, pd->af))
+				return (PF_DROP);
+
+			pd->sctp_initiate_tag = init.init.initiate_tag;
+
 			pd->sctp_flags |= PFDESC_SCTP_INIT;
 			break;
+		}
 		case SCTP_ABORT_ASSOCIATION:
 			pd->sctp_flags |= PFDESC_SCTP_ABORT;
 			break;

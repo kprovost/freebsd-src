@@ -3134,7 +3134,7 @@ pf_return(struct pf_krule *r, struct pf_krule *nr, struct pf_pdesc *pd,
 #if defined(SCTP) || defined(SCTP_SUPPORT)
 	} else if (pd->proto == IPPROTO_SCTP &&
 	    (r->rule_flag & PFRULE_RETURN)) {
-		pf_send_sctp_abort(af, pd, r->return_ttl, rtableid);
+		pf_send_sctp_abort(af, pd, r->return_ttl, r->rtableid);
 #endif
 	} else if (pd->proto != IPPROTO_ICMP && af == AF_INET &&
 		r->return_icmp)
@@ -6804,8 +6804,6 @@ pf_test(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb *
 	case IPPROTO_SCTP: {
 		if (!pf_pull_hdr(m, off, &pd.hdr.sctp, sizeof(pd.hdr.sctp),
 		    &action, &reason, AF_INET)) {
-			if (action != PF_PASS)
-				log = PF_LOG_FORCE;
 			goto done;
 		}
 		pd.sport = &pd.hdr.sctp.src_port;
@@ -7282,8 +7280,6 @@ pf_test6(int dir, int pflags, struct ifnet *ifp, struct mbuf **m0, struct inpcb 
 	case IPPROTO_SCTP: {
 		if (!pf_pull_hdr(m, off, &pd.hdr.sctp, sizeof(pd.hdr.sctp),
 		    &action, &reason, AF_INET6)) {
-			if (action != PF_PASS)
-				log = PF_LOG_FORCE;
 			goto done;
 		}
 		pd.sport = &pd.hdr.sctp.src_port;
